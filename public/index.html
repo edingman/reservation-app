@@ -183,6 +183,114 @@
         </div>
         <button class="btn btn-primary" id="save-general-settings">Save Settings</button>
       </div>
+
+      <!-- Data Backup -->
+      <div class="settings-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3>Data Backup (Google Drive)</h3>
+          <span id="backup-status-badge" class="connection-badge disconnected">
+            <span class="status-dot gray"></span> Not configured
+          </span>
+        </div>
+
+        <p class="text-muted text-small" style="margin-bottom:16px">
+          Backs up your database, settings, and floor plan images to a Google Drive folder.
+          Requires Google Calendar to be connected first. The backup uses the same service account.
+        </p>
+
+        <!-- Auto-backup toggle -->
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px;background:var(--stone-lightest);border-radius:8px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0">
+            <input type="checkbox" id="auto-backup-toggle" style="width:18px;height:18px;accent-color:var(--teal)">
+            <span style="font-weight:500">Auto-backup every 5 minutes</span>
+          </label>
+          <span class="text-muted text-xs mono" id="last-backup-time"></span>
+        </div>
+
+        <!-- Manual buttons -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-teal" id="manual-backup-btn">
+            <i data-lucide="upload-cloud" style="width:14px;height:14px"></i> Backup Now
+          </button>
+          <button class="btn btn-outline" id="manual-restore-btn">
+            <i data-lucide="download-cloud" style="width:14px;height:14px"></i> Restore from Drive
+          </button>
+        </div>
+
+        <div id="backup-result" style="margin-top:12px;display:none"></div>
+
+        <!-- Setup Guide -->
+        <details style="margin-top:20px">
+          <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--teal)">
+            <i data-lucide="book-open" style="width:14px;height:14px;vertical-align:middle"></i>
+            Step-by-step Google Setup Guide
+          </summary>
+          <div style="margin-top:12px;padding:16px;background:var(--stone-lightest);border-radius:8px;font-size:0.85rem;line-height:1.7">
+            <h4 style="margin-bottom:8px">1. Create a Google Cloud Project</h4>
+            <ol style="margin-left:20px;margin-bottom:16px">
+              <li>Go to <a href="https://console.cloud.google.com" target="_blank" style="color:var(--teal)">console.cloud.google.com</a></li>
+              <li>Click the project dropdown at the top → <strong>New Project</strong></li>
+              <li>Name it (e.g. "Room Booking") and click <strong>Create</strong></li>
+              <li>Make sure the new project is selected in the dropdown</li>
+            </ol>
+
+            <h4 style="margin-bottom:8px">2. Enable the Required APIs</h4>
+            <ol style="margin-left:20px;margin-bottom:16px">
+              <li>Go to <strong>APIs & Services → Library</strong> (left menu)</li>
+              <li>Search for and enable each of these:
+                <ul style="margin-left:16px;margin-top:4px">
+                  <li><strong>Google Calendar API</strong></li>
+                  <li><strong>Admin SDK API</strong></li>
+                  <li><strong>Google Drive API</strong></li>
+                </ul>
+              </li>
+              <li>Click <strong>Enable</strong> on each one</li>
+            </ol>
+
+            <h4 style="margin-bottom:8px">3. Create a Service Account</h4>
+            <ol style="margin-left:20px;margin-bottom:16px">
+              <li>Go to <strong>APIs & Services → Credentials</strong></li>
+              <li>Click <strong>+ Create Credentials → Service Account</strong></li>
+              <li>Give it a name (e.g. "room-booking-service")</li>
+              <li>Skip the optional role/access steps and click <strong>Done</strong></li>
+              <li>Click on the newly created service account</li>
+              <li>Go to the <strong>Keys</strong> tab</li>
+              <li>Click <strong>Add Key → Create New Key → JSON → Create</strong></li>
+              <li>A JSON file will download — <strong>this is your service account key</strong></li>
+            </ol>
+            <h4 style="margin-bottom:8px">4. Enable Domain-Wide Delegation</h4>
+            <ol style="margin-left:20px;margin-bottom:16px">
+              <li>On the service account page, click <strong>Show Advanced Settings</strong> or look under <strong>Domain-wide delegation</strong></li>
+              <li>Check <strong>Enable Google Workspace Domain-wide Delegation</strong></li>
+              <li>Save and copy the <strong>Client ID</strong> (a long number)</li>
+            </ol>
+
+            <h4 style="margin-bottom:8px">5. Grant API Scopes in Google Admin</h4>
+            <ol style="margin-left:20px;margin-bottom:16px">
+              <li>Go to <a href="https://admin.google.com" target="_blank" style="color:var(--teal)">admin.google.com</a></li>
+              <li>Navigate to <strong>Security → Access and data control → API controls</strong></li>
+              <li>Click <strong>Manage Domain Wide Delegation</strong></li>
+              <li>Click <strong>Add new</strong></li>
+              <li>Paste the <strong>Client ID</strong> from step 4</li>
+              <li>In the OAuth scopes field, paste all three scopes (comma-separated):
+                <code style="display:block;background:#222;color:#fff;padding:8px;border-radius:4px;margin-top:4px;font-size:0.75rem;word-break:break-all">https://www.googleapis.com/auth/calendar,https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly,https://www.googleapis.com/auth/drive.file</code>
+              </li>
+              <li>Click <strong>Authorize</strong></li>
+            </ol>
+
+            <h4 style="margin-bottom:8px">6. Configure in This App</h4>
+            <ol style="margin-left:20px">
+              <li>Upload the JSON key file using the upload area above</li>
+              <li>Enter the <strong>Delegated User Email</strong> — this must be a Google Workspace admin email (e.g. admin@yourdomain.com)</li>
+              <li>Leave <strong>Customer ID</strong> as "my_customer" (default works for most setups)</li>
+              <li>Click <strong>Save Settings</strong> then <strong>Test Connection</strong></li>
+              <li>If connected, your Google Workspace room resources will appear below</li>
+              <li>Go to the <strong>Rooms</strong> tab and link each room to its Google resource</li>
+              <li>Enable <strong>Auto-backup</strong> in the Data Backup section below to protect your data</li>
+            </ol>
+          </div>
+        </details>
+      </div>
     </div>
   </main>
 
