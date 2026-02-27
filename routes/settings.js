@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const db = require('../db');
 const googleCalendar = require('../google-calendar');
+const driveBackup = require('../google-drive-backup');
 
 // Configure multer for Google service account key upload
 const keyStorage = multer.diskStorage({
@@ -45,7 +46,7 @@ router.get('/', (req, res) => {
 
 // PUT /api/settings — update settings
 router.put('/', (req, res) => {
-  const allowedKeys = ['base_url', 'timezone', 'google_delegated_user', 'google_customer_id'];
+  const allowedKeys = ['base_url', 'timezone', 'google_delegated_user', 'google_customer_id', 'auto_backup'];
   const upsert = db.prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -114,6 +115,49 @@ router.get('/google-resources', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ===== Backup / Restore =====
+
+// GET /api/settings/backup-status
+router.get('/backup-status', (req, res) => {
+  const status = driveBackup.getBackupStatus();
+  res.json(status);
+});
+
+// POST /api/settings/backup — trigger manual backup
+router.post('/backup', async (req, res) => {
+  try {
+    const result = await driveBackup.performBackup();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/settings/restore — trigger manual restore
+router.post('/restore', async (req, res) => {
+  try {
+    const result = await driveBackup.performRestore();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/settings/auto-backup — toggle auto-backup
+router.post('/auto-backup', (req, res) => {
+  const { enabled } = req.body;
+  db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+    .run('auto_backup', enabled ? 'true' : 'false');
+
+  if (enabled) {
+    driveBackup.startAutoBackup(5);
+  } else {
+    driveBackup.stopAutoBackup();
+  }
+
+  res.json({ autoBackupEnabled: enabled });
 });
 
 module.exports = router;
