@@ -36,7 +36,8 @@ async function getAuth() {
     keyFile: keyPath,
     scopes: [
       'https://www.googleapis.com/auth/calendar',
-      'https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly'
+      'https://www.googleapis.com/auth/admin.directory.resource.calendar.readonly',
+      'https://www.googleapis.com/auth/drive.file'
     ],
     clientOptions: {
       subject: delegatedUser
@@ -123,6 +124,7 @@ async function checkConnection() {
     const delegatedUser = getSetting('google_delegated_user');
     await calendar.calendarList.list({ maxResults: 1 });
 
+    // Read key file for display info
     const keyData = JSON.parse(fs.readFileSync(getKeyPath(), 'utf-8'));
 
     return {
