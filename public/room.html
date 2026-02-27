@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Book Room</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/style.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/style.min.css">
+  <style>
+    :root {
+      --red: #FF2F00;
+      --teal: #0093A3;
+      --white: #FFFFFF;
+      --black: #000000;
+      --stone: #ACA19A;
+      --stone-light: #D6CFC9;
+      --stone-lighter: #EEEAE7;
+      --stone-lightest: #F7F5F3;
+      --font-sans: 'Geist', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'Geist Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--stone-lightest);
+      color: var(--black);
+      max-width: 480px;
+      margin: 0 auto;
+      min-height: 100vh;
+      padding-bottom: 24px;
+    }
+
+    /* Header */
+    .room-header {
+      background: var(--black);
+      color: var(--white);
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .room-name {
+      font-size: 1.25rem;
+      font-weight: 700;
+      font-style: italic;
+    }
+
+    .room-capacity {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--stone);
+    }
+
+    /* Status Banner */
+    .status-banner {
+      padding: 20px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 1.1rem;
+    }
+
+    .status-banner.available {
+      background: var(--teal);
+      color: var(--white);
+    }
+
+    .status-banner.occupied {
+      background: var(--red);
+      color: var(--white);
+    }
+
+    .status-banner .status-sub {
+      font-weight: 400;
+      font-size: 0.85rem;
+      margin-top: 4px;
+      opacity: 0.9;
+    }
+
+    /* Time Slots */
+    .slots-section {
+      padding: 16px 20px;
+    }
+
+    .slots-section h3 {
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--stone);
+      margin-bottom: 12px;
+    }
+
+    .time-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .time-slot {
+      display: flex;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 100ms ease;
+      position: relative;
+    }
+
+    .time-slot.available {
+      background: var(--white);
+      border: 1px solid var(--stone-lighter);
+    }
+
+    .time-slot.available:hover {
+      border-color: var(--teal);
+      background: rgba(0, 147, 163, 0.04);
+    }
+
+    .time-slot.available.selected {
+      border-color: var(--teal);
+      background: rgba(0, 147, 163, 0.08);
+      box-shadow: 0 0 0 2px rgba(0, 147, 163, 0.2);
+    }
+
+    .time-slot.booked {
+      background: rgba(255, 47, 0, 0.06);
+      border: 1px solid rgba(255, 47, 0, 0.15);
+      cursor: default;
+    }
+
+    .time-slot-time {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      width: 100px;
+      flex-shrink: 0;
+      color: var(--black);
+    }
+
+    .time-slot-info {
+      flex: 1;
+      font-size: 0.85rem;
+    }
+
+    .time-slot.booked .time-slot-info {
+      color: var(--red);
+      font-weight: 500;
+    }
+
+    .time-slot.available .time-slot-info {
+      color: var(--stone);
+    }
+
+    /* Booking Form */
+    .booking-form {
+      background: var(--white);
+      margin: 0 20px;
+      padding: 20px;
+      border-radius: 12px;
+      border: 2px solid var(--teal);
+      display: none;
+    }
+
+    .booking-form.visible { display: block; }
+
+    .booking-form h3 {
+      font-size: 1rem;
+      margin-bottom: 4px;
+    }
+
+    .booking-form .selected-time {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--teal);
+      margin-bottom: 16px;
+    }
+
+    .form-field {
+      margin-bottom: 12px;
+    }
+
+    .form-field label {
+      display: block;
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--stone);
+      margin-bottom: 4px;
+    }
+
+    .form-field input, .form-field select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--stone-light);
+      border-radius: 8px;
+      font-family: var(--font-sans);
+      font-size: 1rem;
+      -webkit-appearance: none;
+    }
+
+    .form-field input:focus, .form-field select:focus {
+      outline: none;
+      border-color: var(--teal);
+    }
+
+    .time-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    .btn-book {
+      width: 100%;
+      padding: 14px;
+      background: var(--teal);
+      color: var(--white);
+      border: none;
+      border-radius: 8px;
+      font-family: var(--font-sans);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+
+    .btn-book:active { opacity: 0.9; }
+    .btn-book:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-cancel-form {
+      width: 100%;
+      padding: 10px;
+      background: none;
+      color: var(--stone);
+      border: 1px solid var(--stone-light);
+      border-radius: 8px;
+      font-family: var(--font-sans);
+      font-size: 0.9rem;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+
+    /* Toast */
+    .mobile-toast {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      background: var(--black);
+      color: var(--white);
+      padding: 14px 20px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      text-align: center;
+      z-index: 100;
+      animation: slideUp 200ms ease;
+    }
+
+    .mobile-toast.success { border-bottom: 3px solid var(--teal); }
+    .mobile-toast.error { border-bottom: 3px solid var(--red); }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .loading {
+      text-align: center;
+      padding: 48px;
+      color: var(--stone);
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid var(--stone-light);
+      border-top-color: var(--teal);
+      border-radius: 50%;
+      animation: spin 600ms linear infinite;
+      margin: 0 auto 12px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <div id="loading" class="loading">
+    <div class="spinner"></div>
+    <p>Loading room...</p>
+  </div>
+
+  <div id="app" style="display:none">
+    <!-- Header -->
+    <div class="room-header">
+      <div>
+        <div class="room-name" id="room-name-display"></div>
+        <div class="room-capacity" id="room-capacity-display"></div>
+      </div>
+    </div>
+
+    <!-- Status Banner -->
+    <div class="status-banner" id="status-banner">
+      <div id="status-text"></div>
+      <div class="status-sub" id="status-sub"></div>
+    </div>
+
+    <!-- Time Slots -->
+    <div class="slots-section">
+      <h3>Today's Schedule</h3>
+      <div class="time-grid" id="time-grid"></div>
+    </div>
+
+    <!-- Booking Form -->
+    <div class="booking-form" id="booking-form">
+      <h3>Book This Room</h3>
+      <div class="selected-time" id="form-selected-time"></div>
+
+      <div class="form-field">
+        <label>Your Name</label>
+        <input type="text" id="form-name" placeholder="Enter your name" autocomplete="off">
+      </div>
+
+      <div class="form-field">
+        <label>Description (optional)</label>
+        <input type="text" id="form-desc" placeholder="Meeting purpose" autocomplete="off">
+      </div>
+
+      <div class="time-row">
+        <div class="form-field">
+          <label>Start</label>
+          <input type="time" id="form-start">
+        </div>
+        <div class="form-field">
+          <label>End</label>
+          <input type="time" id="form-end">
+        </div>
+      </div>
+
+      <button class="btn-book" id="btn-confirm-book">Book Room</button>
+      <button class="btn-cancel-form" id="btn-cancel-form">Cancel</button>
+    </div>
+  </div>
+
+  <script src="/js/room-page.js"></script>
+</body>
+</html>

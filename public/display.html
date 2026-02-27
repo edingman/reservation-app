@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <title>Room Display</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/style.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/style.min.css">
+  <style>
+    :root {
+      --red: #FF2F00;
+      --teal: #0093A3;
+      --white: #FFFFFF;
+      --black: #000000;
+      --stone: #ACA19A;
+      --stone-light: #D6CFC9;
+      --font-sans: 'Geist', -apple-system, sans-serif;
+      --font-mono: 'Geist Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--black);
+      color: var(--white);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Bar */
+    .display-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 20px 32px;
+    }
+
+    .display-room-name {
+      font-size: 2rem;
+      font-weight: 900;
+      font-style: italic;
+      letter-spacing: -0.02em;
+    }
+
+    .display-clock {
+      font-family: var(--font-mono);
+      font-size: 1.5rem;
+      color: var(--stone);
+    }
+
+    /* Status Banner */
+    .display-status {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 40px;
+      transition: background 500ms ease;
+    }
+
+    .display-status.available { background: var(--teal); }
+    .display-status.occupied { background: var(--red); }
+
+    .display-status-text {
+      font-size: 4rem;
+      font-weight: 900;
+      letter-spacing: 0.05em;
+    }
+
+    .display-status-sub {
+      font-size: 1.5rem;
+      margin-top: 8px;
+      opacity: 0.9;
+    }
+
+    .display-status-detail {
+      font-family: var(--font-mono);
+      font-size: 1rem;
+      margin-top: 16px;
+      opacity: 0.7;
+    }
+
+    /* Bottom: schedule + QR */
+    .display-bottom {
+      background: #111;
+      padding: 24px 32px;
+      display: flex;
+      gap: 32px;
+      align-items: flex-start;
+    }
+
+    .display-schedule {
+      flex: 1;
+    }
+
+    .display-schedule h3 {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--stone);
+      margin-bottom: 12px;
+    }
+
+    .display-schedule-item {
+      display: flex;
+      align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #222;
+      gap: 16px;
+    }
+
+    .schedule-item-time {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--stone);
+      width: 120px;
+      flex-shrink: 0;
+    }
+
+    .schedule-item-name {
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .schedule-item-desc {
+      font-size: 0.8rem;
+      color: var(--stone);
+      margin-left: auto;
+    }
+
+    .schedule-item-current {
+      color: var(--red);
+    }
+
+    .schedule-item-current .schedule-item-time { color: var(--red); }
+
+    .display-qr {
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .display-qr img {
+      width: 140px;
+      height: 140px;
+      border-radius: 12px;
+    }
+
+    .display-qr p {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--stone);
+      margin-top: 8px;
+    }
+
+    .no-bookings {
+      color: var(--stone);
+      font-size: 0.9rem;
+      padding: 12px 0;
+    }
+
+    /* Loading */
+    .display-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--stone);
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid #333;
+      border-top-color: var(--teal);
+      border-radius: 50%;
+      animation: spin 600ms linear infinite;
+      margin-bottom: 12px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <div class="display-loading" id="loading">
+    <div style="text-align:center">
+      <div class="spinner"></div>
+      <p>Loading room display...</p>
+    </div>
+  </div>
+
+  <div id="app" style="display:none;height:100%;display:none;flex-direction:column">
+    <div class="display-top">
+      <div class="display-room-name" id="d-room-name"></div>
+      <div class="display-clock" id="d-clock"></div>
+    </div>
+
+    <div class="display-status" id="d-status">
+      <div class="display-status-text" id="d-status-text"></div>
+      <div class="display-status-sub" id="d-status-sub"></div>
+      <div class="display-status-detail" id="d-status-detail"></div>
+    </div>
+
+    <div class="display-bottom">
+      <div class="display-schedule">
+        <h3>Upcoming</h3>
+        <div id="d-schedule"></div>
+      </div>
+      <div class="display-qr">
+        <img id="d-qr" src="" alt="QR Code">
+        <p>Scan to book</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/display-page.js"></script>
+</body>
+</html>
