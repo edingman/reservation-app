@@ -99,7 +99,7 @@ function openRoomModal(room = null) {
   document.getElementById('room-amenities').value = room ? room.amenities : '';
 
   // Populate Google resources dropdown
-  const select = document.getElentById('room-google-resource');
+  const select = document.getElementById('room-google-resource');
   select.innerHTML = '<option value="">None (not linked)</option>';
   googleResources.forEach(r => {
     const opt = document.createElement('option');
@@ -244,6 +244,9 @@ async function loadSettings() {
 
     // Check connection status
     checkGoogleStatus();
+
+    // Load backup status
+    loadBackupStatus();
   } catch (err) {
     console.error('Failed to load settings:', err);
   }
@@ -409,6 +412,145 @@ document.getElementById('save-general-settings').addEventListener('click', async
     showToast('Settings saved');
   } catch (err) {
     showToast('Failed to save settings', 'error');
+  }
+});
+
+// ===== Backup / Restore =====
+async function loadBackupStatus() {
+  try {
+    const res = await fetch(`${API}/api/settings/backup-status`);
+    const status = await res.json();
+    const badge = document.getElementById('backup-status-badge');
+    const toggle = document.getElementById('auto-backup-toggle');
+    const lastTime = document.getElementById('last-backup-time');
+
+    if (status.configured) {
+      if (status.autoBackupRunning) {
+        badge.className = 'connection-badge connected';
+        badge.innerHTML = '<span class="status-dot green"></span> Auto-backup active';
+      } else {
+        badge.className = 'connection-badge disconnected';
+        badge.innerHTML = '<span class="status-dot gray"></span> Ready';
+      }
+      toggle.checked = status.autoBackupEnabled;
+    } else {
+      badge.className = 'connection-badge disconnected';
+      badge.innerHTML = '<span class="status-dot gray"></span> Connect Google first';
+      toggle.disabled = true;
+    }
+
+    if (status.lastBackup) {
+      const d = new Date(status.lastBackup);
+      lastTime.textContent = `Last: ${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+    }
+  } catch (err) {
+    console.warn('Failed to load backup status:', err);
+  }
+}
+
+// Auto-backup toggle
+document.getElementById('auto-backup-toggle').addEventListener('change', async (e) => {
+  try {
+    await fetch(`${API}/api/settings/auto-backup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: e.target.checked })
+    });
+    showToast(e.target.checked ? 'Auto-backup enabled' : 'Auto-backup disabled');
+    loadBackupStatus();
+  } catch (err) {
+    showToast('Failed to update auto-backup', 'error');
+  }
+});
+
+// Manual backup
+document.getElementById('manual-backup-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('manual-backup-btn');
+  const resultDiv = document.getElementById('backup-result');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></div> Backing up...';
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<div class="spinner" style="margin:8px auto"></div>';
+
+  try {
+    const res = await fetch(`${API}/api/settings/backup`, { method: 'POST' });
+    const result = await res.json();
+
+    if (res.ok) {
+      resultDiv.innerHTML = `
+        <div style="padding:12px;background:rgba(0,147,163,0.08);border-radius:8px;border:1px solid var(--teal)">
+          <strong style="color:var(--teal)">Backup complete!</strong><br>
+          <span class="mono text-xs">${result.files.length} files backed up to Google Drive</span><br>
+          <span class="mono text-xs">${result.timestamp}</span>
+        </div>
+      `;
+      showToast('Backup complete');
+      loadBackupStatus();
+    } else {
+      resultDiv.innerHTML = `
+        <div style="padding:12px;background:rgba(255,47,0,0.06);border-radius:8px;border:1px solid var(--red)">
+          <strong style="color:var(--red)">Backup failed</strong><br>
+          <span class="text-small">${escapeHtml(result.error)}</span>
+        </div>
+      `;
+    }
+  } catch (err) {
+    resultDiv.innerHTML = `
+      <div style="padding:12px;background:rgba(255,47,0,0.06);border-radius:8px;border:1px solid var(--red)">
+        <strong style="color:var(--red)">Backup failed</strong><br>
+        <span class="text-small">${escapeHtml(err.message)}</span>
+      </div>
+    `;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="upload-cloud" style="width:14px;height:14px"></i> Backup Now';
+    lucide.createIcons();
+  }
+});
+
+// Manual restore
+document.getElementById('manual-restore-btn').addEventListener('click', async () => {
+  if (!confirm('Restore from Google Drive?\n\nThis will download your backed-up data. A server restart may be required for the database to fully take effect.')) return;
+
+  const btn = document.getElementById('manual-restore-btn');
+  const resultDiv = document.getElementById('backup-result');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></div> Restoring...';
+  resultDiv.style.display = 'block';
+  resultDiv.innerHTML = '<div class="spinner" style="margin:8px auto"></div>';
+
+  try {
+    const res = await fetch(`${API}/api/settings/restore`, { method: 'POST' });
+    const result = await res.json();
+
+    if (res.ok) {
+      resultDiv.innerHTML = `
+        <div style="padding:12px;background:rgba(0,147,163,0.08);border-radius:8px;border:1px solid var(--teal)">
+          <strong style="color:var(--teal)">Restore complete!</strong><br>
+          <span class="mono text-xs">${result.files.length} files restored from Google Drive</span>
+          ${result.restartRequired ? '<br><strong style="color:var(--red)">⚠ Restart the server to apply database changes</strong>' : ''}
+        </div>
+      `;
+      showToast('Restore complete');
+    } else {
+      resultDiv.innerHTML = `
+        <div style="padding:12px;background:rgba(255,47,0,0.06);border-radius:8px;border:1px solid var(--red)">
+          <strong style="color:var(--red)">Restore failed</strong><br>
+          <span class="text-small">${escapeHtml(result.error)}</span>
+        </div>
+      `;
+    }
+  } catch (err) {
+    resultDiv.innerHTML = `
+      <div style="padding:12px;background:rgba(255,47,0,0.06);border-radius:8px;border:1px solid var(--red)">
+        <strong style="color:var(--red)">Restore failed</strong><br>
+        <span class="text-small">${escapeHtml(err.message)}</span>
+      </div>
+    `;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="download-cloud" style="width:14px;height:14px"></i> Restore from Drive';
+    lucide.createIcons();
   }
 });
 
