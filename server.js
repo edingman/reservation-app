@@ -34,4 +34,15 @@ app.use('/api/settings', require('./routes/settings'));
 // Start server
 app.listen(PORT, () => {
   console.log(`Bahn Express Room Booking running at http://localhost:${PORT}`);
+
+  // Start auto-backup if enabled
+  try {
+    const driveBackup = require('./google-drive-backup');
+    const autoBackupSetting = db.prepare("SELECT value FROM settings WHERE key = 'auto_backup'").get();
+    if (autoBackupSetting && autoBackupSetting.value !== 'false') {
+      driveBackup.startAutoBackup(5);
+    }
+  } catch (err) {
+    console.log('[Auto-backup] Not started:', err.message || 'Not configured');
+  }
 });
