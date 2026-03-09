@@ -56,10 +56,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_bookings_room_time
     ON bookings(room_id, start_time, end_time);
 
+  CREATE INDEX IF NOT EXISTS idx_bookings_google_event
+    ON bookings(google_event_id);
+
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
   );
 `);
+
+// Migrations
+try {
+  db.exec(`ALTER TABLE bookings ADD COLUMN source TEXT DEFAULT 'local'`);
+} catch (e) {
+  // Column already exists
+}
 
 module.exports = db;
