@@ -1,4 +1,4 @@
-/* ===== Bahn Express Room Booking — Main App ===== */
+/* ===== Bahn Express Room Booking â Main App ===== */
 
 const API = '';
 
@@ -27,6 +27,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.add('active');
     document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
 
+    if (btn.dataset.tab === 'dashboard' && typeof loadDashboard === 'function') loadDashboard();
     if (btn.dataset.tab === 'rooms') loadRooms();
     if (btn.dataset.tab === 'qrcodes') loadQRCodes();
     if (btn.dataset.tab === 'settings') loadSettings();
@@ -34,13 +35,131 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+// ===== Office State =====
+let offices = [];
+let selectedOfficeId = '';
+
+async function loadOffices() {
+  try {
+    const res = await fetch(`${API}/api/offices`);
+    offices = await res.json();
+    renderOfficeSelector();
+  } catch (err) {
+    console.warn('Failed to load offices:', err);
+  }
+}
+
+function renderOfficeSelector() {
+  const select = document.getElementById('office-select');
+  const current = select.value;
+  select.innerHTML = '<option value="">All Offices</option>';
+  offices.forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o.id;
+    opt.textContent = o.name;
+    if (String(o.id) === current) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+document.getElementById('office-select').addEventListener('change', (e) => {
+  selectedOfficeId = e.target.value;
+  loadRooms();
+  if (typeof loadFloorPlans === 'function') loadFloorPlans();
+  if (typeof loadDashboard === 'function') loadDashboard();
+});
+
+function getSelectedOfficeId() {
+  return selectedOfficeId || '';
+}
+
+// ===== Office Management Modal =====
+document.getElementById('manage-offices-btn').addEventListener('click', () => {
+  document.getElementById('offices-modal').classList.add('open');
+  renderOfficesList();
+});
+document.getElementById('close-offices-modal').addEventListener('click', () => {
+  document.getElementById('offices-modal').classList.remove('open');
+});
+
+document.getElementById('add-office-btn').addEventListener('click', async () => {
+  const input = document.getElementById('new-office-name');
+  const name = input.value.trim();
+  if (!name) return;
+
+  try {
+    const res = await fetch(`${API}/api/offices`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return showToast(err.error || 'Failed to create office', 'error');
+    }
+    input.value = '';
+    showToast('Office created');
+    await loadOffices();
+    renderOfficesList();
+  } catch (err) {
+    showToast('Failed to create office', 'error');
+  }
+});
+
+document.getElementById('new-office-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('add-office-btn').click();
+});
+
+function renderOfficesList() {
+  const list = document.getElementById('offices-list');
+  if (offices.length === 0) {
+    list.innerHTML = '<div style="color:var(--stone);padding:16px;text-align:center;font-size:0.85rem">No offices yet. Add your first office above.</div>';
+    return;
+  }
+  list.innerHTML = offices.map(o => `
+    <div class="office-list-item">
+      <div>
+        <div class="office-name">${escapeHtml(o.name)}</div>
+        <div class="office-slug">/${o.slug}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="office-room-count">${o.room_count} room${o.room_count !== 1 ? 's' : ''}</span>
+        <button class="btn btn-ghost btn-sm" onclick="deleteOffice(${o.id})" style="color:var(--red)">
+          <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+        </button>
+      </div>
+    </div>
+  `).join('');
+  lucide.createIcons();
+}
+
+async function deleteOffice(id) {
+  const office = offices.find(o => o.id === id);
+  if (!office || !confirm(`Delete office "${office.name}"?\n\nThis will also delete all rooms, floor plans, and bookings for this office.`)) return;
+
+  try {
+    await fetch(`${API}/api/offices/${id}`, { method: 'DELETE' });
+    showToast('Office deleted');
+    if (selectedOfficeId === String(id)) {
+      selectedOfficeId = '';
+      document.getElementById('office-select').value = '';
+    }
+    await loadOffices();
+    renderOfficesList();
+    loadRooms();
+  } catch (err) {
+    showToast('Failed to delete office', 'error');
+  }
+}
+
 // ===== Rooms State =====
 let rooms = [];
 let googleResources = [];
 
 async function loadRooms() {
   try {
-    const res = await fetch(`${API}/api/rooms`);
+    const officeParam = getSelectedOfficeId() ? `?office_id=${getSelectedOfficeId()}` : '';
+    const res = await fetch(`${API}/api/rooms${officeParam}`);
     rooms = await res.json();
     renderRooms();
   } catch (err) {
@@ -48,9 +167,27 @@ async function loadRooms() {
   }
 }
 
+function getDisplayUrl(room) {
+  if (room.office_slug && room.room_number) {
+    return `/display.html?office=${room.office_slug}&room=${room.room_number}`;
+  }
+  return `/display.html?id=${room.id}`;
+}
+
+function getRoomUrl(room) {
+  if (room.office_slug && room.room_number) {
+    return `/room.html?office=${room.office_slug}&room=${room.room_number}`;
+  }
+  return `/room.html?id=${room.id}`;
+}
+
 function renderRooms() {
   const grid = document.getElementById('rooms-grid');
   const empty = document.getElementById('rooms-empty');
+  const label = document.getElementById('rooms-office-label');
+
+  const office = offices.find(o => String(o.id) === getSelectedOfficeId());
+  label.textContent = office ? office.name : '';
 
   if (rooms.length === 0) {
     grid.innerHTML = '';
@@ -59,21 +196,33 @@ function renderRooms() {
   }
 
   empty.style.display = 'none';
-  grid.innerHTML = rooms.map(room => `
+  grid.innerHTML = rooms.map(room => {
+    const displayUrl = getDisplayUrl(room);
+    const officeLabel = room.office_name ? `<span class="amenity-tag" style="background:var(--stone-lightest);color:var(--stone);font-weight:500">${escapeHtml(room.office_name)}</span>` : '';
+    const roomNumLabel = room.room_number ? `<span class="mono text-xs" style="color:var(--stone);margin-left:auto">#${room.room_number}</span>` : '';
+
+    return `
     <div class="room-card" data-room-id="${room.id}">
       <div class="room-card-header">
         <span class="room-card-name">${escapeHtml(room.name)}</span>
+        ${roomNumLabel}
         <span class="room-card-capacity"><i data-lucide="users" style="width:12px;height:12px"></i> ${room.capacity}</span>
       </div>
-      ${room.amenities ? `
+      ${room.amenities || room.office_name ? `
         <div class="room-card-amenities">
-          ${room.amenities.split(',').filter(a => a.trim()).map(a => `<span class="amenity-tag">${escapeHtml(a.trim())}</span>`).join('')}
+          ${officeLabel}
+          ${(room.amenities || '').split(',').filter(a => a.trim()).map(a => `<span class="amenity-tag">${escapeHtml(a.trim())}</span>`).join('')}
         </div>
       ` : ''}
       ${room.google_resource_email
         ? `<div class="google-linked"><span class="status-dot green"></span> Google Calendar linked</div>`
         : `<div class="google-unlinked"><span class="status-dot gray"></span> Not linked to Google</div>`
       }
+      <div class="room-url-row">
+        <span class="url-label">Display</span>
+        <span class="url-text">${escapeHtml(displayUrl)}</span>
+        <button class="copy-url-btn" onclick="copyUrl('${escapeHtml(displayUrl)}', this)">Copy</button>
+      </div>
       <div class="room-card-actions">
         <button class="btn btn-ghost btn-sm" onclick="editRoom(${room.id})">
           <i data-lucide="pencil" style="width:14px;height:14px"></i> Edit
@@ -83,20 +232,48 @@ function renderRooms() {
         </button>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 
   lucide.createIcons();
+}
+
+function copyUrl(path, btn) {
+  const fullUrl = window.location.origin + path;
+  navigator.clipboard.writeText(fullUrl).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    btn.style.color = 'var(--teal)';
+    btn.style.borderColor = 'var(--teal)';
+    setTimeout(() => { btn.textContent = orig; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
+  });
 }
 
 // ===== Room Modal =====
 const roomModal = document.getElementById('room-modal');
 
 function openRoomModal(room = null) {
+  if (!room && offices.length === 0) {
+    showToast('Create an office first before adding rooms', 'error');
+    return;
+  }
+
   document.getElementById('room-modal-title').textContent = room ? 'Edit Room' : 'Add Room';
   document.getElementById('room-edit-id').value = room ? room.id : '';
   document.getElementById('room-name').value = room ? room.name : '';
   document.getElementById('room-capacity').value = room ? room.capacity : 4;
   document.getElementById('room-amenities').value = room ? room.amenities : '';
+
+  // Populate office dropdown (required)
+  const officeSelect = document.getElementById('room-office');
+  officeSelect.innerHTML = '<option value="">Select office...</option>';
+  offices.forEach(o => {
+    const opt = document.createElement('option');
+    opt.value = o.id;
+    opt.textContent = o.name;
+    if (room && room.office_id === o.id) opt.selected = true;
+    else if (!room && getSelectedOfficeId() && String(o.id) === getSelectedOfficeId()) opt.selected = true;
+    officeSelect.appendChild(opt);
+  });
 
   // Populate Google resources dropdown
   const select = document.getElementById('room-google-resource');
@@ -125,14 +302,17 @@ document.getElementById('cancel-room-modal').addEventListener('click', closeRoom
 document.getElementById('room-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = document.getElementById('room-edit-id').value;
+  const officeVal = document.getElementById('room-office').value;
   const data = {
     name: document.getElementById('room-name').value.trim(),
     capacity: parseInt(document.getElementById('room-capacity').value) || 1,
     amenities: document.getElementById('room-amenities').value.trim(),
-    google_resource_email: document.getElementById('room-google-resource').value || null
+    google_resource_email: document.getElementById('room-google-resource').value || null,
+    office_id: officeVal ? parseInt(officeVal) : null
   };
 
   if (!data.name) return showToast('Room name is required', 'error');
+  if (!data.office_id) return showToast('Office is required', 'error');
 
   try {
     const res = await fetch(`${API}/api/rooms${id ? '/' + id : ''}`, {
@@ -234,6 +414,7 @@ async function loadSettings() {
     document.getElementById('setting-customer-id').value = settings.google_customer_id || 'my_customer';
     document.getElementById('setting-base-url').value = settings.base_url || '';
     if (settings.timezone) document.getElementById('setting-timezone').value = settings.timezone;
+    if (settings.anthropic_api_key) document.getElementById('setting-anthropic-key').value = settings.anthropic_api_key;
 
     // Update key upload status
     if (settings.google_key_uploaded) {
@@ -244,6 +425,9 @@ async function loadSettings() {
 
     // Check connection status
     checkGoogleStatus();
+
+    // Load sync status
+    loadSyncStatus();
 
     // Load backup status
     loadBackupStatus();
@@ -262,12 +446,14 @@ async function checkGoogleStatus() {
       badge.className = 'connection-badge connected';
       badge.innerHTML = '<span class="status-dot green"></span> Connected';
 
-      // Load resources
+      // Load resources and show sync section
       loadGoogleResources();
+      document.getElementById('google-sync-section').style.display = 'block';
     } else {
       badge.className = 'connection-badge disconnected';
       badge.innerHTML = '<span class="status-dot gray"></span> Not connected';
       document.getElementById('google-resources-section').style.display = 'none';
+      document.getElementById('google-sync-section').style.display = 'none';
     }
   } catch (err) {
     console.error('Failed to check Google status:', err);
@@ -398,10 +584,12 @@ document.getElementById('test-google-connection').addEventListener('click', asyn
 
 // Save general settings
 document.getElementById('save-general-settings').addEventListener('click', async () => {
+  const apiKeyVal = document.getElementById('setting-anthropic-key').value.trim();
   const data = {
     base_url: document.getElementById('setting-base-url').value.trim(),
     timezone: document.getElementById('setting-timezone').value
   };
+  if (apiKeyVal) data.anthropic_api_key = apiKeyVal;
 
   try {
     await fetch(`${API}/api/settings`, {
@@ -412,6 +600,139 @@ document.getElementById('save-general-settings').addEventListener('click', async
     showToast('Settings saved');
   } catch (err) {
     showToast('Failed to save settings', 'error');
+  }
+});
+
+// ===== Google Calendar Sync =====
+async function loadSyncStatus() {
+  try {
+    const res = await fetch(`${API}/api/settings/google-sync-status`);
+    const data = await res.json();
+    const el = document.getElementById('last-sync-time');
+    if (data.lastSync) {
+      const d = new Date(data.lastSync);
+      el.textContent = `Last sync: ${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+    } else {
+      el.textContent = 'Not synced yet';
+    }
+
+    // Update push notification status
+    const badge = document.getElementById('push-status-badge');
+    const enableBtn = document.getElementById('enable-push-btn');
+    const disableBtn = document.getElementById('disable-push-btn');
+
+    if (data.push && data.push.active) {
+      badge.className = 'connection-badge connected';
+      badge.innerHTML = `<span class="status-dot green"></span> Active (${data.push.channelCount} room${data.push.channelCount !== 1 ? 's' : ''})`;
+      enableBtn.style.display = 'none';
+      disableBtn.style.display = '';
+    } else {
+      badge.className = 'connection-badge disconnected';
+      badge.innerHTML = '<span class="status-dot gray"></span> Off';
+      enableBtn.style.display = '';
+      disableBtn.style.display = 'none';
+    }
+  } catch (err) {
+    console.warn('Failed to load sync status:', err);
+  }
+}
+
+// Enable push notifications
+document.getElementById('enable-push-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('enable-push-btn');
+  const resultDiv = document.getElementById('push-result');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></div> Setting up...';
+
+  try {
+    const res = await fetch(`${API}/api/settings/google-push`, { method: 'POST' });
+    const result = await res.json();
+
+    resultDiv.style.display = 'block';
+    if (res.ok) {
+      resultDiv.innerHTML = `
+        <div style="padding:8px;background:rgba(0,147,163,0.08);border-radius:6px;border:1px solid var(--teal)">
+          <span class="mono text-xs" style="color:var(--teal)">Push enabled for ${result.watchCount} room(s)</span>
+          ${result.errors.length ? `<br><span class="text-xs" style="color:var(--red)">${escapeHtml(result.errors.join(', '))}</span>` : ''}
+        </div>
+      `;
+      showToast('Push notifications enabled');
+    } else {
+      resultDiv.innerHTML = `
+        <div style="padding:8px;background:rgba(255,47,0,0.06);border-radius:6px;border:1px solid var(--red)">
+          <span class="text-xs" style="color:var(--red)">${escapeHtml(result.error)}</span>
+        </div>
+      `;
+    }
+    loadSyncStatus();
+  } catch (err) {
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = `<span class="text-xs" style="color:var(--red)">${escapeHtml(err.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="bell" style="width:14px;height:14px"></i> Enable Push';
+    lucide.createIcons();
+  }
+});
+
+// Disable push notifications
+document.getElementById('disable-push-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('disable-push-btn');
+  btn.disabled = true;
+
+  try {
+    await fetch(`${API}/api/settings/google-push`, { method: 'DELETE' });
+    showToast('Push notifications disabled');
+    document.getElementById('push-result').style.display = 'none';
+    loadSyncStatus();
+  } catch (err) {
+    showToast('Failed to disable push', 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('manual-sync-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('manual-sync-btn');
+  const resultDiv = document.getElementById('sync-result');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle"></div> Syncing...';
+
+  try {
+    const res = await fetch(`${API}/api/settings/google-sync`, { method: 'POST' });
+    const result = await res.json();
+
+    resultDiv.style.display = 'block';
+    if (result.synced) {
+      resultDiv.innerHTML = `
+        <div style="padding:12px;background:rgba(0,147,163,0.08);border-radius:8px;border:1px solid var(--teal);margin-bottom:12px">
+          <strong style="color:var(--teal)">Sync complete</strong><br>
+          <span class="mono text-xs">Imported: ${result.imported} Â· Removed: ${result.removed} Â· Unchanged: ${result.skipped}</span>
+          ${result.errors.length ? `<br><span class="text-xs" style="color:var(--red)">${result.errors.join(', ')}</span>` : ''}
+        </div>
+      `;
+      showToast(`Synced: ${result.imported} imported, ${result.removed} removed`);
+    } else {
+      resultDiv.innerHTML = `
+        <div style="padding:12px;background:rgba(255,47,0,0.06);border-radius:8px;border:1px solid var(--red);margin-bottom:12px">
+          <strong style="color:var(--red)">Sync not available</strong><br>
+          <span class="text-small">${escapeHtml(result.reason || 'Unknown reason')}</span>
+        </div>
+      `;
+    }
+    loadSyncStatus();
+  } catch (err) {
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = `
+      <div style="padding:12px;background:rgba(255,47,0,0.06);border-radius:8px;border:1px solid var(--red);margin-bottom:12px">
+        <strong style="color:var(--red)">Sync failed</strong><br>
+        <span class="text-small">${escapeHtml(err.message)}</span>
+      </div>
+    `;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i data-lucide="refresh-cw" style="width:14px;height:14px"></i> Sync Now';
+    lucide.createIcons();
   }
 });
 
@@ -528,7 +849,7 @@ document.getElementById('manual-restore-btn').addEventListener('click', async ()
         <div style="padding:12px;background:rgba(0,147,163,0.08);border-radius:8px;border:1px solid var(--teal)">
           <strong style="color:var(--teal)">Restore complete!</strong><br>
           <span class="mono text-xs">${result.files.length} files restored from Google Drive</span>
-          ${result.restartRequired ? '<br><strong style="color:var(--red)">⚠ Restart the server to apply database changes</strong>' : ''}
+          ${result.restartRequired ? '<br><strong style="color:var(--red)">â  Restart the server to apply database changes</strong>' : ''}
         </div>
       `;
       showToast('Restore complete');
@@ -555,8 +876,9 @@ document.getElementById('manual-restore-btn').addEventListener('click', async ()
 });
 
 // ===== Initialization =====
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadOffices();
   loadRooms();
-  loadFloorPlans();
+  if (typeof loadDashboard === 'function') loadDashboard();
   lucide.createIcons();
 });
