@@ -3,12 +3,13 @@ const router = express.Router();
 const db = require('../db');
 const googleCalendar = require('../google-calendar');
 
+// GET /api/bookings?date= â all bookings for a date
 router.get('/', (req, res) => {
   const { date } = req.query;
   if (!date) return res.status(400).json({ error: 'date query parameter required' });
 
   const dayStart = date + 'T00:00:00';
-  const dayEnd = date + 'T23:59:59Z';
+  const dayEnd = date + 'T23:59:59';
 
   const bookings = db.prepare(`
     SELECT b.*, r.name as room_name
@@ -21,8 +22,10 @@ router.get('/', (req, res) => {
   res.json(bookings);
 });
 
+// POST /api/rooms/:roomId/bookings â create a booking
 router.post('/', async (req, res) => {
-  const { room_id, booked_by, description, start_time, end_time } = req.body;
+  const { room_id, booked_by, description, start_time, end_time, source } = req.body;
+  const bookingSource = ['portal', 'qr', 'ipad'].includes(source) ? source : 'local';
 
   if (!room_id || !booked_by || !start_time || !end_time) {
     return res.status(400).json({ error: 'room_id, booked_by, start_time, end_time required' });
@@ -35,6 +38,7 @@ router.post('/', async (req, res) => {
   const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(room_id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
 
+  // Check for conflicts
   const conflict = db.prepare(`
     SELECT COUNT(*) as count FROM bookings
     WHERE room_id = ? AND start_time < ? AND end_time > ?
@@ -44,6 +48,7 @@ router.post('/', async (req, res) => {
     return res.status(409).json({ error: 'Time slot conflicts with an existing booking' });
   }
 
+  // Create Google Calendar event if configured
   let googleEventId = null;
   try {
     googleEventId = await googleCalendar.createEvent(room, {
@@ -58,9 +63,9 @@ router.post('/', async (req, res) => {
 
   try {
     const result = db.prepare(`
-      INSERT INTO bookings (room_id, booked_by, description, start_time, end_time, google_event_id)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(room_id, booked_by, description || '', start_time, end_time, googleEventId);
+      INSERT INTO bookings (room_id, booked_by, description, start_time, end_time, google_event_id, source)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(room_id, booked_by, description || '', start_time, end_time, googleEventId, bookingSource);
 
     const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(booking);
@@ -69,10 +74,12 @@ router.post('/', async (req, res) => {
   }
 });
 
+// DELETE /api/bookings/:id â cancel a booking
 router.delete('/:id', async (req, res) => {
   const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
   if (!booking) return res.status(404).json({ error: 'Booking not found' });
 
+  // Delete Google Calendar event if exists
   if (booking.google_event_id) {
     try {
       await googleCalendar.deleteEvent(booking.google_event_id);
