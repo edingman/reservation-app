@@ -184,6 +184,132 @@
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Book Now Button */
+    .book-now-btn {
+      margin-top: 24px;
+      padding: 16px 48px;
+      font-size: 1.3rem;
+      font-weight: 700;
+      font-family: var(--font-sans);
+      letter-spacing: 0.05em;
+      background: var(--white);
+      color: var(--teal);
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: transform 150ms ease, box-shadow 150ms ease;
+    }
+    .book-now-btn:hover { transform: scale(1.04); box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+    .book-now-btn:active { transform: scale(0.98); }
+
+    /* Booking Overlay */
+    .booking-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 200;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .booking-overlay.open { display: flex; }
+
+    .booking-panel {
+      background: #1a1a1a;
+      border-radius: 20px;
+      padding: 40px;
+      width: 480px;
+      max-width: 90vw;
+      text-align: center;
+    }
+
+    .booking-panel h2 {
+      font-size: 1.8rem;
+      font-weight: 900;
+      margin-bottom: 8px;
+    }
+
+    .booking-panel .panel-sub {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--stone);
+      margin-bottom: 28px;
+    }
+
+    /* Duration buttons */
+    .duration-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .duration-btn {
+      padding: 18px 12px;
+      font-size: 1.2rem;
+      font-weight: 700;
+      font-family: var(--font-sans);
+      background: #2a2a2a;
+      color: var(--white);
+      border: 2px solid #333;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 150ms ease;
+    }
+    .duration-btn:hover:not(:disabled) { border-color: var(--teal); background: #333; }
+    .duration-btn.selected { border-color: var(--teal); background: var(--teal); color: var(--white); }
+    .duration-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .duration-btn .dur-label { font-size: 0.75rem; font-weight: 400; color: var(--stone); margin-top: 2px; }
+    .duration-btn.selected .dur-label { color: rgba(255,255,255,0.8); }
+
+    /* Name input step */
+    .name-step { display: none; }
+    .name-step.visible { display: block; }
+
+    .name-input {
+      width: 100%;
+      padding: 14px 16px;
+      font-size: 1.1rem;
+      font-family: var(--font-sans);
+      background: #2a2a2a;
+      color: var(--white);
+      border: 2px solid #333;
+      border-radius: 12px;
+      outline: none;
+      text-align: center;
+      margin-bottom: 16px;
+    }
+    .name-input:focus { border-color: var(--teal); }
+    .name-input::placeholder { color: #555; }
+
+    .confirm-btn {
+      width: 100%;
+      padding: 16px;
+      font-size: 1.2rem;
+      font-weight: 700;
+      font-family: var(--font-sans);
+      background: var(--teal);
+      color: var(--white);
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: opacity 150ms ease;
+    }
+    .confirm-btn:hover { opacity: 0.9; }
+    .confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .cancel-link {
+      display: inline-block;
+      margin-top: 16px;
+      font-size: 0.9rem;
+      color: var(--stone);
+      cursor: pointer;
+      border: none;
+      background: none;
+      font-family: var(--font-sans);
+    }
+    .cancel-link:hover { color: var(--white); }
   </style>
 </head>
 <body>
@@ -205,6 +331,28 @@
       <div class="display-status-text" id="d-status-text"></div>
       <div class="display-status-sub" id="d-status-sub"></div>
       <div class="display-status-detail" id="d-status-detail"></div>
+      <button class="book-now-btn" id="d-book-now" style="display:none">BOOK NOW</button>
+    </div>
+
+    <!-- Booking Overlay -->
+    <div class="booking-overlay" id="booking-overlay">
+      <div class="booking-panel">
+        <h2>Book This Room</h2>
+        <div class="panel-sub" id="overlay-room-name"></div>
+
+        <!-- Step 1: Duration -->
+        <div id="duration-step">
+          <div class="duration-grid" id="duration-grid"></div>
+        </div>
+
+        <!-- Step 2: Name -->
+        <div class="name-step" id="name-step">
+          <input type="text" class="name-input" id="booker-name" placeholder="Your name (optional)">
+          <button class="confirm-btn" id="confirm-book-btn">Confirm</button>
+        </div>
+
+        <button class="cancel-link" id="cancel-booking">Cancel</button>
+      </div>
     </div>
 
     <div class="display-bottom">
