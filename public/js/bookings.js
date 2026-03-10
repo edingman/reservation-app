@@ -19,10 +19,11 @@ function openBookingSidebar(roomId) {
   if (!room) return;
 
   document.getElementById('sidebar-room-name').textContent = room.name;
-  document.getElementById('sidebar-room-info').textContent = `Capacity: ${room.capacity}${room.amenities ? ' · ' + room.amenities : ''}`;
+  document.getElementById('sidebar-room-info').textContent = `Capacity: ${room.capacity}${room.amenities ? ' Â· ' + room.amenities : ''}`;
 
   // Set date to today
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   document.getElementById('sidebar-date').value = today;
   sidebarDate = today;
 
@@ -96,20 +97,26 @@ function renderSchedule() {
 
     if (top + height <= 0 || top >= totalHours * hourHeight) return;
 
+    const isImported = booking.source === 'google_calendar';
     const el = document.createElement('div');
-    el.className = 'schedule-booking';
+    el.className = `schedule-booking${isImported ? ' imported' : ''}`;
     el.style.cssText = `top:${top}px;height:${Math.max(height, 20)}px;left:56px;right:0;`;
     el.innerHTML = `
       <div class="booking-name">${escapeHtml(booking.booked_by)}</div>
-      <div class="booking-time">${formatTime(booking.start_time)} – ${formatTime(booking.end_time)}</div>
+      <div class="booking-time">${formatTime(booking.start_time)} â ${formatTime(booking.end_time)}</div>
       ${booking.description ? `<div class="text-xs" style="opacity:0.8;margin-top:2px">${escapeHtml(booking.description)}</div>` : ''}
+      ${isImported ? `<div class="booking-source">Google Calendar</div>` : ''}
     `;
 
-    el.addEventListener('click', () => {
-      if (confirm(`Cancel booking by ${booking.booked_by}?\n${formatTime(booking.start_time)} – ${formatTime(booking.end_time)}`)) {
-        cancelBooking(booking.id);
-      }
-    });
+    if (isImported) {
+      el.title = 'Imported from Google Calendar â manage in Google Calendar';
+    } else {
+      el.addEventListener('click', () => {
+        if (confirm(`Cancel booking by ${booking.booked_by}?\n${formatTime(booking.start_time)} â ${formatTime(booking.end_time)}`)) {
+          cancelBooking(booking.id);
+        }
+      });
+    }
 
     timeline.appendChild(el);
   });
@@ -141,7 +148,7 @@ function showBookingForm(startH, startM, endH, endM) {
   document.getElementById('booking-start').value = `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
   document.getElementById('booking-end').value = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
   document.getElementById('sidebar-selected-time').textContent =
-    `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')} – ${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+    `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')} â ${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
 
   document.getElementById('booking-name').focus();
 }
@@ -174,7 +181,8 @@ document.getElementById('confirm-booking').addEventListener('click', async () =>
         booked_by: name,
         description,
         start_time: startISO,
-        end_time: endISO
+        end_time: endISO,
+        source: 'portal'
       })
     });
 
