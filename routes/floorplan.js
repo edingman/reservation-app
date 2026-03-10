@@ -31,27 +31,38 @@ const upload = multer({
   }
 });
 
-// GET /api/floorplans — list all floor plans
+// GET /api/floorplans?office_id=N â list floor plans (filtered by office)
 router.get('/', (req, res) => {
-  const plans = db.prepare('SELECT * FROM floor_plans ORDER BY created_at DESC').all();
+  const { office_id } = req.query;
+  if (!office_id) {
+    return res.json(db.prepare('SELECT fp.*, o.name as office_name FROM floor_plans fp JOIN offices o ON o.id = fp.office_id ORDER BY fp.created_at DESC').all());
+  }
+  const plans = db.prepare('SELECT fp.*, o.name as office_name FROM floor_plans fp JOIN offices o ON o.id = fp.office_id WHERE fp.office_id = ? ORDER BY fp.created_at DESC').all(office_id);
   res.json(plans);
 });
 
-// POST /api/floorplans — upload a floor plan
+// POST /api/floorplans â upload a floor plan (office_id required)
 router.post('/', upload.single('image'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Image file required' });
+
   const name = req.body.name || 'Unnamed Floor Plan';
+  const officeId = req.body.office_id;
+
+  if (!officeId) return res.status(400).json({ error: 'office_id is required' });
+
+  const office = db.prepare('SELECT * FROM offices WHERE id = ?').get(officeId);
+  if (!office) return res.status(404).json({ error: 'Office not found' });
 
   const imagePath = `/uploads/${req.file.filename}`;
   const result = db.prepare(`
-    INSERT INTO floor_plans (name, image_path) VALUES (?, ?)
-  `).run(name, imagePath);
+    INSERT INTO floor_plans (name, image_path, office_id) VALUES (?, ?, ?)
+  `).run(name, imagePath, officeId);
 
-  const plan = db.prepare('SELECT * FROM floor_plans WHERE id = ?').get(result.lastInsertRowid);
+  const plan = db.prepare('SELECT fp.*, o.name as office_name FROM floor_plans fp JOIN offices o ON o.id = fp.office_id WHERE fp.id = ?').get(result.lastInsertRowid);
   res.status(201).json(plan);
 });
 
-// DELETE /api/floorplans/:id — delete a floor plan
+// DELETE /api/floorplans/:id â delete a floor plan
 router.delete('/:id', (req, res) => {
   const plan = db.prepare('SELECT * FROM floor_plans WHERE id = ?').get(req.params.id);
   if (!plan) return res.status(404).json({ error: 'Floor plan not found' });
@@ -67,7 +78,7 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
-// GET /api/floorplans/:id/markers — get markers for a floor plan
+// GET /api/floorplans/:id/markers â get markers for a floor plan
 router.get('/:id/markers', (req, res) => {
   const markers = db.prepare(`
     SELECT rm.*, r.name as room_name, r.capacity, r.amenities
