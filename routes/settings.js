@@ -31,7 +31,7 @@ const uploadKey = multer({
   }
 });
 
-// GET /api/settings — get all settings
+// GET /api/settings â get all settings
 router.get('/', (req, res) => {
   const rows = db.prepare('SELECT * FROM settings').all();
   const settings = {};
@@ -44,9 +44,9 @@ router.get('/', (req, res) => {
   res.json(settings);
 });
 
-// PUT /api/settings — update settings
+// PUT /api/settings â update settings
 router.put('/', (req, res) => {
-  const allowedKeys = ['base_url', 'timezone', 'google_delegated_user', 'google_customer_id', 'auto_backup'];
+  const allowedKeys = ['base_url', 'timezone', 'google_delegated_user', 'google_customer_id', 'auto_backup', 'google_calendar_sync', 'anthropic_api_key'];
   const upsert = db.prepare(`
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -71,7 +71,7 @@ router.put('/', (req, res) => {
   res.json(settings);
 });
 
-// POST /api/settings/google-key — upload Google service account JSON key
+// POST /api/settings/google-key â upload Google service account JSON key
 router.post('/google-key', uploadKey.single('keyfile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'JSON key file required' });
 
@@ -97,7 +97,7 @@ router.post('/google-key', uploadKey.single('keyfile'), (req, res) => {
   }
 });
 
-// GET /api/settings/google-status — check Google Calendar connection
+// GET /api/settings/google-status â check Google Calendar connection
 router.get('/google-status', async (req, res) => {
   try {
     const status = await googleCalendar.checkConnection();
@@ -107,11 +107,50 @@ router.get('/google-status', async (req, res) => {
   }
 });
 
-// GET /api/google/resources — list Google Workspace room resources
+// GET /api/google/resources â list Google Workspace room resources
 router.get('/google-resources', async (req, res) => {
   try {
     const resources = await googleCalendar.listRoomResources();
     res.json(resources);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== Google Calendar Sync =====
+
+// POST /api/settings/google-sync â trigger manual sync from Google Calendar
+router.post('/google-sync', async (req, res) => {
+  try {
+    const result = await googleCalendar.syncFromGoogle();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/settings/google-sync-status â get last sync time and push status
+router.get('/google-sync-status', (req, res) => {
+  const lastSync = db.prepare("SELECT value FROM settings WHERE key = 'last_google_sync'").get();
+  const pushStatus = googleCalendar.getPushStatus();
+  res.json({ lastSync: lastSync?.value || null, push: pushStatus });
+});
+
+// POST /api/settings/google-push â enable push notifications
+router.post('/google-push', async (req, res) => {
+  try {
+    const result = await googleCalendar.setupWatches();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/settings/google-push â disable push notifications
+router.delete('/google-push', async (req, res) => {
+  try {
+    await googleCalendar.stopAllWatches();
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -125,7 +164,7 @@ router.get('/backup-status', (req, res) => {
   res.json(status);
 });
 
-// POST /api/settings/backup — trigger manual backup
+// POST /api/settings/backup â trigger manual backup
 router.post('/backup', async (req, res) => {
   try {
     const result = await driveBackup.performBackup();
@@ -135,7 +174,7 @@ router.post('/backup', async (req, res) => {
   }
 });
 
-// POST /api/settings/restore — trigger manual restore
+// POST /api/settings/restore â trigger manual restore
 router.post('/restore', async (req, res) => {
   try {
     const result = await driveBackup.performRestore();
@@ -145,7 +184,7 @@ router.post('/restore', async (req, res) => {
   }
 });
 
-// POST /api/settings/auto-backup — toggle auto-backup
+// POST /api/settings/auto-backup â toggle auto-backup
 router.post('/auto-backup', (req, res) => {
   const { enabled } = req.body;
   db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
