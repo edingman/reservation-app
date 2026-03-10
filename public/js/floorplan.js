@@ -10,8 +10,11 @@ let placingRoomId = null;
 // ===== Load Floor Plans =====
 async function loadFloorPlans() {
   try {
-    const res = await fetch(`${API}/api/floorplans`);
+    const officeId = getSelectedOfficeId();
+    const param = officeId ? `?office_id=${officeId}` : '';
+    const res = await fetch(`${API}/api/floorplans${param}`);
     floorPlans = await res.json();
+    currentFloorPlan = null;
     renderFloorPlanSelector();
   } catch (err) {
     console.error('Failed to load floor plans:', err);
@@ -21,16 +24,21 @@ async function loadFloorPlans() {
 function renderFloorPlanSelector() {
   const select = document.getElementById('floorplan-select');
   const empty = document.getElementById('floorplan-empty');
-  const uploadArea = document.getElementById('floorplan-upload-area');
   const display = document.getElementById('floorplan-display');
+  const officeId = getSelectedOfficeId();
 
   select.innerHTML = '<option value="">Select a floor plan...</option>';
   floorPlans.forEach(fp => {
     const opt = document.createElement('option');
     opt.value = fp.id;
-    opt.textContent = fp.name;
+    opt.textContent = fp.office_name ? `${fp.name} (${fp.office_name})` : fp.name;
     select.appendChild(opt);
   });
+
+  // Show/hide upload button based on office selection
+  const uploadBtn = document.getElementById('upload-floorplan-btn');
+  const uploadEmptyBtn = document.getElementById('upload-floorplan-empty-btn');
+  uploadBtn.style.display = officeId ? '' : 'none';
 
   if (floorPlans.length === 0) {
     empty.style.display = 'block';
@@ -38,13 +46,30 @@ function renderFloorPlanSelector() {
     document.getElementById('edit-markers-btn').style.display = 'none';
     document.getElementById('place-room-btn').style.display = 'none';
     document.getElementById('delete-floorplan-btn').style.display = 'none';
+
+    if (!officeId) {
+      empty.innerHTML = `
+        <i data-lucide="map" style="width:48px;height:48px"></i>
+        <h3>Select an office</h3>
+        <p>Choose an office from the dropdown to view or upload floor plans</p>
+      `;
+      if (uploadEmptyBtn) uploadEmptyBtn.style.display = 'none';
+    } else {
+      empty.innerHTML = `
+        <i data-lucide="map" style="width:48px;height:48px"></i>
+        <h3>No floor plans yet</h3>
+        <p>Upload a floor plan image to get started</p>
+        <button class="btn btn-primary" id="upload-floorplan-empty-btn" onclick="openFloorplanUploadModal()">
+          <i data-lucide="upload" style="width:14px;height:14px"></i> Upload Floor Plan
+        </button>
+      `;
+    }
+    lucide.createIcons();
   } else {
     empty.style.display = 'none';
     // Auto-select first floor plan
-    if (!currentFloorPlan) {
-      select.value = floorPlans[0].id;
-      selectFloorPlan(floorPlans[0].id);
-    }
+    select.value = floorPlans[0].id;
+    selectFloorPlan(floorPlans[0].id);
   }
 }
 
@@ -79,10 +104,11 @@ async function loadMarkers() {
     markers = await res.json();
 
     // Also load current availability for coloring
-    const today = new Date().toISOString().slice(0, 10);
+    const d = new Date();
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const bookingsRes = await fetch(`${API}/api/bookings?date=${today}`);
     const allBookings = await bookingsRes.json();
-    const now = new Date().toISOString();
+    const now = `${today}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 
     renderMarkers(allBookings, now);
   } catch (err) {
@@ -216,14 +242,18 @@ document.getElementById('place-room-btn').addEventListener('click', () => {
 });
 
 function openPlaceRoomModal() {
-  // Find rooms not yet placed on this floor plan
+  // Only show rooms from the same office as the floor plan
+  const floorPlanOfficeId = currentFloorPlan ? currentFloorPlan.office_id : null;
   const placedRoomIds = markers.map(m => m.room_id);
-  const unplaced = rooms.filter(r => !placedRoomIds.includes(r.id));
+  const unplaced = rooms.filter(r =>
+    !placedRoomIds.includes(r.id) &&
+    r.office_id === floorPlanOfficeId
+  );
 
   const list = document.getElementById('unplaced-rooms-list');
 
   if (unplaced.length === 0) {
-    list.innerHTML = '<p class="text-muted">All rooms are already placed on this floor plan.</p>';
+    list.innerHTML = '<p class="text-muted">All rooms in this office are already placed on this floor plan.</p>';
   } else {
     list.innerHTML = unplaced.map(r => `
       <div class="resource-item" style="cursor:pointer" onclick="startPlacement(${r.id}, '${escapeHtml(r.name)}')">
@@ -294,6 +324,12 @@ const floorplanModal = document.getElementById('floorplan-modal');
 let pendingFloorplanFile = null;
 
 function openFloorplanUploadModal() {
+  const officeId = getSelectedOfficeId();
+  if (!officeId) {
+    showToast('Select an office first', 'error');
+    return;
+  }
+
   pendingFloorplanFile = null;
   document.getElementById('floorplan-name').value = '';
   document.getElementById('floorplan-preview').style.display = 'none';
@@ -301,7 +337,6 @@ function openFloorplanUploadModal() {
 }
 
 document.getElementById('upload-floorplan-btn').addEventListener('click', openFloorplanUploadModal);
-document.getElementById('upload-floorplan-empty-btn')?.addEventListener('click', openFloorplanUploadModal);
 document.getElementById('close-floorplan-modal').addEventListener('click', () => floorplanModal.classList.remove('open'));
 document.getElementById('cancel-floorplan-upload').addEventListener('click', () => floorplanModal.classList.remove('open'));
 
@@ -337,10 +372,14 @@ function previewFloorplan(file) {
 document.getElementById('confirm-floorplan-upload').addEventListener('click', async () => {
   if (!pendingFloorplanFile) return showToast('Select an image first', 'error');
 
+  const officeId = getSelectedOfficeId();
+  if (!officeId) return showToast('Select an office first', 'error');
+
   const name = document.getElementById('floorplan-name').value.trim() || 'Floor Plan';
   const formData = new FormData();
   formData.append('image', pendingFloorplanFile);
   formData.append('name', name);
+  formData.append('office_id', officeId);
 
   try {
     const res = await fetch(`${API}/api/floorplans`, { method: 'POST', body: formData });
