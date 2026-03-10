@@ -5,17 +5,34 @@ const HOUR_START = 7;
 const HOUR_END = 20;
 
 const params = new URLSearchParams(window.location.search);
-const roomId = params.get('id');
+let roomId = params.get('id');
+const officeSlug = params.get('office');
+const roomNumber = params.get('room');
 
 let roomData = null;
 let todayBookings = [];
 let selectedStart = null;
 let selectedEnd = null;
 
-if (!roomId) {
-  document.getElementById('loading').innerHTML = '<p style="color:var(--red)">No room ID specified</p>';
+if (!roomId && (!officeSlug || !roomNumber)) {
+  document.getElementById('loading').innerHTML = '<p style="color:var(--red)">No room specified.<br>Use room.html?office=stockholm&room=1</p>';
+} else if (!roomId) {
+  resolveAndLoad();
 } else {
   loadRoom();
+}
+
+async function resolveAndLoad() {
+  try {
+    const res = await fetch(`${API_BASE}/api/rooms/lookup?office=${encodeURIComponent(officeSlug)}&room=${roomNumber}`);
+    if (!res.ok) throw new Error('Room not found');
+    const room = await res.json();
+    roomId = String(room.id);
+    loadRoom();
+  } catch (err) {
+    document.getElementById('loading').innerHTML =
+      `<p style="color:var(--red)">${err.message || 'Room not found'}</p>`;
+  }
 }
 
 async function loadRoom() {
@@ -53,14 +70,14 @@ function render() {
     banner.className = 'status-banner occupied';
     document.getElementById('status-text').textContent = 'OCCUPIED';
     document.getElementById('status-sub').textContent =
-      `${currentBooking.booked_by} · Until ${fmtTime(currentBooking.end_time)}`;
+      `${currentBooking.booked_by} Â· Until ${fmtTime(currentBooking.end_time)}`;
   } else {
     banner.className = 'status-banner available';
     document.getElementById('status-text').textContent = 'AVAILABLE';
 
     const nextBooking = todayBookings.find(b => new Date(b.start_time) > now);
     document.getElementById('status-sub').textContent = nextBooking
-      ? `Next: ${fmtTime(nextBooking.start_time)} — ${nextBooking.booked_by}`
+      ? `Next: ${fmtTime(nextBooking.start_time)} â ${nextBooking.booked_by}`
       : 'No more bookings today';
   }
 
@@ -72,7 +89,7 @@ function renderTimeSlots() {
   const grid = document.getElementById('time-grid');
   grid.innerHTML = '';
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr(new Date());
 
   for (let h = HOUR_START; h < HOUR_END; h++) {
     for (let m = 0; m < 60; m += 30) {
@@ -92,12 +109,12 @@ function renderTimeSlots() {
       if (booking) {
         el.className = 'time-slot booked';
         el.innerHTML = `
-          <div class="time-slot-time">${timeLabel} – ${endLabel}</div>
+          <div class="time-slot-time">${timeLabel} â ${endLabel}</div>
           <div class="time-slot-info">${escHtml(booking.booked_by)}</div>
         `;
 
         el.addEventListener('click', () => {
-          if (confirm(`Cancel booking by ${booking.booked_by}?\n${fmtTime(booking.start_time)} – ${fmtTime(booking.end_time)}`)) {
+          if (confirm(`Cancel booking by ${booking.booked_by}?\n${fmtTime(booking.start_time)} â ${fmtTime(booking.end_time)}`)) {
             cancelBooking(booking.id);
           }
         });
@@ -105,7 +122,7 @@ function renderTimeSlots() {
         const isSelected = selectedStart === slotStart || (selectedStart && selectedStart <= slotStart && selectedEnd && selectedEnd >= slotEnd);
         el.className = `time-slot available${isSelected ? ' selected' : ''}`;
         el.innerHTML = `
-          <div class="time-slot-time">${timeLabel} – ${endLabel}</div>
+          <div class="time-slot-time">${timeLabel} â ${endLabel}</div>
           <div class="time-slot-info">Available</div>
         `;
 
@@ -121,7 +138,7 @@ function selectSlot(start, end, h, m) {
   selectedStart = start;
   selectedEnd = end;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr(new Date());
   const startTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   const endH = m + 30 >= 60 ? h + 1 : h;
   const endM = (m + 30) % 60;
@@ -130,7 +147,7 @@ function selectSlot(start, end, h, m) {
   // Show booking form
   const form = document.getElementById('booking-form');
   form.classList.add('visible');
-  document.getElementById('form-selected-time').textContent = `${startTime} – ${endTime}`;
+  document.getElementById('form-selected-time').textContent = `${startTime} â ${endTime}`;
   document.getElementById('form-start').value = startTime;
   document.getElementById('form-end').value = endTime;
   document.getElementById('form-name').focus();
@@ -156,7 +173,7 @@ document.getElementById('btn-confirm-book').addEventListener('click', async () =
   const name = document.getElementById('form-name').value.trim();
   if (!name) return mobileToast('Enter your name', 'error');
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr(new Date());
   const startTime = document.getElementById('form-start').value;
   const endTime = document.getElementById('form-end').value;
   const desc = document.getElementById('form-desc').value.trim();
@@ -174,7 +191,8 @@ document.getElementById('btn-confirm-book').addEventListener('click', async () =
         booked_by: name,
         description: desc,
         start_time: `${today}T${startTime}:00`,
-        end_time: `${today}T${endTime}:00`
+        end_time: `${today}T${endTime}:00`,
+        source: 'qr'
       })
     });
 
@@ -209,6 +227,20 @@ async function cancelBooking(id) {
 function fmtTime(iso) {
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function toLocalISO(d) {
+  const Y = d.getFullYear();
+  const M = String(d.getMonth() + 1).padStart(2, '0');
+  const D = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  return `${Y}-${M}-${D}T${h}:${m}:${s}`;
+}
+
+function localDateStr(d) {
+  return toLocalISO(d).slice(0, 10);
 }
 
 function escHtml(str) {
