@@ -25,11 +25,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
+app.use('/api/offices', require('./routes/offices'));
 app.use('/api/rooms', require('./routes/rooms'));
 app.use('/api/bookings', require('./routes/bookings'));
 app.use('/api/floorplans', require('./routes/floorplan'));
 app.use('/api', require('./routes/qrcode'));
 app.use('/api/settings', require('./routes/settings'));
+app.use('/api/analytics', require('./routes/analytics'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 
 // Start server
