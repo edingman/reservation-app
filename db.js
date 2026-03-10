@@ -15,21 +15,35 @@ db.pragma('foreign_keys = ON');
 
 // Create tables
 db.exec(`
+  CREATE TABLE IF NOT EXISTS offices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE IF NOT EXISTS rooms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     capacity INTEGER NOT NULL DEFAULT 1,
     amenities TEXT DEFAULT '',
     google_resource_email TEXT DEFAULT NULL,
+    office_id INTEGER NOT NULL REFERENCES offices(id) ON DELETE CASCADE,
+    room_number INTEGER NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE INDEX IF NOT EXISTS idx_rooms_office ON rooms(office_id, room_number);
 
   CREATE TABLE IF NOT EXISTS floor_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     image_path TEXT NOT NULL,
+    office_id INTEGER NOT NULL REFERENCES offices(id) ON DELETE CASCADE,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE INDEX IF NOT EXISTS idx_floor_plans_office ON floor_plans(office_id);
 
   CREATE TABLE IF NOT EXISTS room_markers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,6 +63,7 @@ db.exec(`
     start_time TEXT NOT NULL,
     end_time TEXT NOT NULL,
     google_event_id TEXT DEFAULT NULL,
+    source TEXT DEFAULT 'local',
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
   );
@@ -64,12 +79,5 @@ db.exec(`
     value TEXT
   );
 `);
-
-// Migrations
-try {
-  db.exec(`ALTER TABLE bookings ADD COLUMN source TEXT DEFAULT 'local'`);
-} catch (e) {
-  // Column already exists
-}
 
 module.exports = db;
