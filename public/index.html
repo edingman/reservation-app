@@ -16,7 +16,7 @@
     <div class="logo">BAHN EXPRESS</div>
     <div class="office-selector">
       <select id="office-select" class="form-select" style="min-width:160px;font-size:0.85rem;padding:6px 10px;border-radius:6px;background:#111;color:#fff;border:1px solid #333">
-        <option value="">All Offices</option>
+        <option value="">Select Office</option>
       </select>
       <button class="btn btn-ghost btn-sm" id="manage-offices-btn" style="color:var(--stone);font-size:0.75rem;padding:4px 8px" title="Manage offices">
         <i data-lucide="building-2" style="width:14px;height:14px"></i>
@@ -24,7 +24,7 @@
     </div>
     <nav class="tabs">
       <button class="tab-btn active" data-tab="dashboard"><i data-lucide="bar-chart-2" style="width:16px;height:16px"></i> Dashboard</button>
-      <button class="tab-btn" data-tab="floorplan"><i data-lucide="map" style="width:16px;height:16px"></i> Floor Plan</button>
+      <button class="tab-btn" data-tab="floorplan"><i data-lucide="map" style="width:16px;height:16px"></i> Floors</button>
       <button class="tab-btn" data-tab="rooms"><i data-lucide="door-open" style="width:16px;height:16px"></i> Rooms</button>
       <button class="tab-btn" data-tab="qrcodes"><i data-lucide="qr-code" style="width:16px;height:16px"></i> QR Codes</button>
       <button class="tab-btn" data-tab="settings"><i data-lucide="settings" style="width:16px;height:16px"></i> Settings</button>
@@ -35,6 +35,12 @@
 
     <!-- ===== DASHBOARD TAB ===== -->
     <div id="tab-dashboard" class="tab-panel active">
+      <div class="select-office-prompt" id="dashboard-select-office">
+        <i data-lucide="building-2" style="width:48px;height:48px"></i>
+        <h3>Select an office</h3>
+        <p>Choose an office from the dropdown above to view analytics</p>
+      </div>
+      <div id="dashboard-content" style="display:none">
       <div class="toolbar">
         <h2>Dashboard</h2>
         <div class="toolbar-divider"></div>
@@ -120,21 +126,25 @@
         <div id="insights-list"></div>
         <div id="ai-summary" style="display:none"></div>
       </div>
+      </div><!-- /dashboard-content -->
     </div>
 
-    <!-- ===== FLOOR PLAN TAB ===== -->
+    <!-- ===== FLOORS TAB ===== -->
     <div id="tab-floorplan" class="tab-panel">
       <div class="toolbar">
-        <h2>Floor Plan</h2>
+        <h2>Floors</h2>
         <div class="toolbar-divider"></div>
         <select id="floorplan-select" class="form-select" style="width:auto;min-width:180px">
-          <option value="">Select a floor plan...</option>
+          <option value="">Select a floor...</option>
         </select>
-        <button class="btn btn-outline btn-sm" id="upload-floorplan-btn">
-          <i data-lucide="upload" style="width:14px;height:14px"></i> Upload
+        <button class="btn btn-primary btn-sm" id="add-floor-btn">
+          <i data-lucide="plus" style="width:14px;height:14px"></i> Add Floor
+        </button>
+        <button class="btn btn-outline btn-sm" id="upload-floorplan-btn" style="display:none">
+          <i data-lucide="upload" style="width:14px;height:14px"></i> Upload Image
         </button>
         <button class="btn btn-outline btn-sm" id="delete-floorplan-btn" style="display:none">
-          <i data-lucide="trash-2" style="width:14px;height:14px"></i> Delete
+          <i data-lucide="trash-2" style="width:14px;height:14px"></i> Delete Floor
         </button>
         <div class="toolbar-divider"></div>
         <button class="btn btn-outline btn-sm" id="edit-markers-btn" style="display:none">
@@ -143,13 +153,10 @@
         <button class="btn btn-teal btn-sm" id="place-room-btn" style="display:none">
           <i data-lucide="plus-circle" style="width:14px;height:14px"></i> Place Room
         </button>
-      </div>
-
-      <!-- Upload area (shown when no floor plan) -->
-      <div id="floorplan-upload-area" class="file-upload-area" style="display:none">
-        <i data-lucide="image-plus" style="width:48px;height:48px;color:var(--stone)"></i>
-        <p style="margin-top:12px;color:var(--stone)">Drop a floor plan image here or click to upload</p>
-        <input type="file" id="floorplan-file-input" accept="image/*">
+        <div class="toolbar-divider"></div>
+        <button class="btn btn-outline btn-sm" id="ai-floorplan-btn" style="display:none">
+          <i data-lucide="sparkles" style="width:14px;height:14px"></i> AI Creator
+        </button>
       </div>
 
       <!-- Floor plan display -->
@@ -160,19 +167,32 @@
         </div>
       </div>
 
+      <!-- No image placeholder (floor exists but no image) -->
+      <div id="floorplan-no-image" class="empty-state" style="display:none">
+        <i data-lucide="image" style="width:48px;height:48px"></i>
+        <h3>No floor plan image</h3>
+        <p>Upload an image for this floor to place rooms on it</p>
+        <button class="btn btn-primary" onclick="openFloorplanImageUpload()">
+          <i data-lucide="upload" style="width:14px;height:14px"></i> Upload Image
+        </button>
+      </div>
+
       <!-- Empty state -->
       <div id="floorplan-empty" class="empty-state">
-        <i data-lucide="map" style="width:48px;height:48px"></i>
-        <h3>No floor plans yet</h3>
-        <p>Upload a floor plan image to get started</p>
-        <button class="btn btn-primary" id="upload-floorplan-empty-btn">
-          <i data-lucide="upload" style="width:14px;height:14px"></i> Upload Floor Plan
-        </button>
+        <i data-lucide="layers" style="width:48px;height:48px"></i>
+        <h3>No floors yet</h3>
+        <p>Add a floor to get started</p>
       </div>
     </div>
 
     <!-- ===== ROOMS TAB ===== -->
     <div id="tab-rooms" class="tab-panel">
+      <div class="select-office-prompt" id="rooms-select-office">
+        <i data-lucide="building-2" style="width:48px;height:48px"></i>
+        <h3>Select an office</h3>
+        <p>Choose an office from the dropdown above to manage rooms</p>
+      </div>
+      <div id="rooms-content" style="display:none">
       <div class="toolbar">
         <h2>Meeting Rooms</h2>
         <span class="text-muted text-small" id="rooms-office-label"></span>
@@ -189,10 +209,17 @@
           <i data-lucide="plus" style="width:14px;height:14px"></i> Add Room
         </button>
       </div>
+      </div><!-- /rooms-content -->
     </div>
 
     <!-- ===== QR CODES TAB ===== -->
     <div id="tab-qrcodes" class="tab-panel">
+      <div class="select-office-prompt" id="qrcodes-select-office">
+        <i data-lucide="building-2" style="width:48px;height:48px"></i>
+        <h3>Select an office</h3>
+        <p>Choose an office from the dropdown above to view QR codes</p>
+      </div>
+      <div id="qrcodes-content" style="display:none">
       <div class="toolbar">
         <h2>QR Codes</h2>
         <p class="text-muted text-small">Print and place next to room doors for quick mobile booking</p>
@@ -203,6 +230,7 @@
         <h3>No rooms yet</h3>
         <p>Add rooms first to generate QR codes</p>
       </div>
+      </div><!-- /qrcodes-content -->
     </div>
 
     <!-- ===== SETTINGS TAB ===== -->
@@ -289,12 +317,6 @@
           </div>
         </div>
 
-        <!-- Room Resources (shown when connected) -->
-        <div id="google-resources-section" style="margin-top:20px;display:none">
-          <h3 style="margin-bottom:8px">Available Room Resources</h3>
-          <p class="text-muted text-small" style="margin-bottom:12px">These are the rooms configured in your Google Workspace. Link them to local rooms in the Rooms tab.</p>
-          <div id="google-resources-list" class="resource-list"></div>
-        </div>
       </div>
 
       <!-- General Settings -->
@@ -517,11 +539,11 @@
           <input type="text" class="form-input" id="room-amenities" placeholder="projector, whiteboard, video">
         </div>
         <div class="form-group">
-          <label>Google Calendar Resource</label>
-          <select class="form-select" id="room-google-resource">
-            <option value="">None (not linked)</option>
+          <label>Floor</label>
+          <select class="form-select" id="room-floor">
+            <option value="">No floor assigned</option>
           </select>
-          <span class="text-muted text-xs" style="margin-top:4px;display:block">Link to a Google Workspace room resource for calendar sync</span>
+          <span class="text-muted text-xs" style="margin-top:4px;display:block">Assign this room to a floor plan</span>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline" id="cancel-room-modal">Cancel</button>
@@ -531,19 +553,26 @@
     </div>
   </div>
 
-  <!-- ===== FLOOR PLAN UPLOAD MODAL ===== -->
+  <!-- ===== ADD FLOOR MODAL ===== -->
   <div class="modal-overlay" id="floorplan-modal">
     <div class="modal">
       <div class="modal-header">
-        <h2>Upload Floor Plan</h2>
+        <h2 id="floor-modal-title">Add Floor</h2>
         <button class="btn btn-ghost btn-icon" id="close-floorplan-modal">
           <i data-lucide="x" style="width:20px;height:20px"></i>
         </button>
       </div>
-      <div class="form-group">
-        <label>Floor Plan Name</label>
-        <input type="text" class="form-input" id="floorplan-name" placeholder="e.g. Ground Floor">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div class="form-group">
+          <label>Floor Name</label>
+          <input type="text" class="form-input" id="floorplan-name" placeholder="e.g. Ground Floor">
+        </div>
+        <div class="form-group">
+          <label>Floor Number</label>
+          <input type="number" class="form-input" id="floorplan-number" placeholder="e.g. 1" required>
+        </div>
       </div>
+      <p class="text-muted text-xs" style="margin-bottom:16px">Floor plan image (optional â can be uploaded later)</p>
       <div class="file-upload-area" id="floorplan-modal-upload">
         <i data-lucide="image-plus" style="width:36px;height:36px;color:var(--stone)"></i>
         <p style="margin-top:8px;color:var(--stone);font-size:0.85rem">Drop image here or click to select</p>
@@ -554,7 +583,78 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" id="cancel-floorplan-upload">Cancel</button>
-        <button class="btn btn-primary" id="confirm-floorplan-upload">Upload</button>
+        <button class="btn btn-primary" id="confirm-floorplan-upload">Save Floor</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== AI FLOOR PLAN CREATOR MODAL ===== -->
+  <div class="modal-overlay" id="ai-floorplan-modal">
+    <div class="modal" style="max-width:700px">
+      <div class="modal-header">
+        <h2><i data-lucide="sparkles" style="width:20px;height:20px;color:var(--teal)"></i> AI Floor Plan Creator</h2>
+        <button class="btn btn-ghost btn-icon" id="close-ai-modal">
+          <i data-lucide="x" style="width:20px;height:20px"></i>
+        </button>
+      </div>
+
+      <!-- Step 1: Choose mode -->
+      <div id="ai-step-input">
+        <div style="display:flex;gap:12px;margin-bottom:16px">
+          <button class="btn btn-outline" id="ai-mode-photo" style="flex:1;padding:20px;flex-direction:column;display:flex;align-items:center;gap:8px">
+            <i data-lucide="camera" style="width:24px;height:24px"></i>
+            <span style="font-weight:600">Analyze Photo</span>
+            <span style="font-size:0.75rem;color:var(--stone)">Upload a floor plan image</span>
+          </button>
+          <button class="btn btn-outline" id="ai-mode-describe" style="flex:1;padding:20px;flex-direction:column;display:flex;align-items:center;gap:8px">
+            <i data-lucide="pencil" style="width:24px;height:24px"></i>
+            <span style="font-weight:600">Describe It</span>
+            <span style="font-size:0.75rem;color:var(--stone)">Let AI generate from text</span>
+          </button>
+        </div>
+
+        <!-- Photo upload sub-section -->
+        <div id="ai-photo-section" style="display:none">
+          <div class="file-upload-area" id="ai-photo-upload">
+            <i data-lucide="image-plus" style="width:36px;height:36px;color:var(--stone)"></i>
+            <p style="margin-top:8px;color:var(--stone);font-size:0.85rem">Drop floor plan photo or click to select</p>
+            <input type="file" id="ai-photo-file" accept="image/*">
+          </div>
+          <div id="ai-photo-preview" style="margin-top:12px;display:none">
+            <img id="ai-photo-preview-img" style="max-width:100%;border-radius:8px" alt="Preview">
+          </div>
+          <button class="btn btn-primary" id="ai-analyze-btn" style="margin-top:12px;width:100%" disabled>
+            <i data-lucide="sparkles" style="width:14px;height:14px"></i> Analyze with AI
+          </button>
+        </div>
+
+        <!-- Describe sub-section -->
+        <div id="ai-describe-section" style="display:none">
+          <textarea class="form-input" id="ai-description" rows="3" placeholder="e.g. A rectangular office floor with 4 meeting rooms along the left wall, 2 phone booths in the corner, and an open area in the center. The board room seats 12 and is at the far end." style="width:100%;resize:vertical"></textarea>
+          <button class="btn btn-primary" id="ai-generate-btn" style="margin-top:12px;width:100%">
+            <i data-lucide="sparkles" style="width:14px;height:14px"></i> Generate Floor Plan
+          </button>
+        </div>
+      </div>
+
+      <!-- Step 2: Loading -->
+      <div id="ai-step-loading" style="display:none;text-align:center;padding:40px 0">
+        <div class="spinner" style="margin:0 auto 16px"></div>
+        <p style="color:var(--stone)">AI is analyzing the layout...</p>
+        <p class="text-muted text-xs">This may take 15â30 seconds</p>
+      </div>
+
+      <!-- Step 3: Results -->
+      <div id="ai-step-results" style="display:none">
+        <div id="ai-svg-preview" style="background:#1a1a1a;border-radius:12px;padding:16px;margin-bottom:16px;text-align:center"></div>
+        <p class="text-muted text-xs mono" style="margin-bottom:8px">Detected rooms:</p>
+        <div id="ai-rooms-list" style="max-height:200px;overflow-y:auto;margin-bottom:16px"></div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" id="ai-retry-btn">Try Again</button>
+          <button class="btn btn-primary" id="ai-apply-btn">
+            <i data-lucide="check" style="width:14px;height:14px"></i> Apply as Floor Plan
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -585,8 +685,36 @@
           <i data-lucide="x" style="width:20px;height:20px"></i>
         </button>
       </div>
-      <div style="display:flex;gap:8px;margin-bottom:16px">
-        <input type="text" class="form-input" id="new-office-name" placeholder="Office name (e.g. Stockholm)" style="flex:1">
+      <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+        <input type="text" class="form-input" id="new-office-name" placeholder="Office name (e.g. Stockholm)" style="flex:1;min-width:140px">
+        <select class="form-select" id="new-office-timezone" style="width:auto;min-width:160px">
+          <option value="Europe/Stockholm">Europe/Stockholm</option>
+          <option value="Europe/London">Europe/London</option>
+          <option value="Europe/Berlin">Europe/Berlin</option>
+          <option value="Europe/Paris">Europe/Paris</option>
+          <option value="Europe/Helsinki">Europe/Helsinki</option>
+          <option value="Europe/Amsterdam">Europe/Amsterdam</option>
+          <option value="Europe/Zurich">Europe/Zurich</option>
+          <option value="Europe/Madrid">Europe/Madrid</option>
+          <option value="Europe/Rome">Europe/Rome</option>
+          <option value="Europe/Warsaw">Europe/Warsaw</option>
+          <option value="Europe/Prague">Europe/Prague</option>
+          <option value="Europe/Oslo">Europe/Oslo</option>
+          <option value="Europe/Copenhagen">Europe/Copenhagen</option>
+          <option value="America/New_York">America/New_York</option>
+          <option value="America/Chicago">America/Chicago</option>
+          <option value="America/Denver">America/Denver</option>
+          <option value="America/Los_Angeles">America/Los_Angeles</option>
+          <option value="America/Sao_Paulo">America/Sao_Paulo</option>
+          <option value="Asia/Tokyo">Asia/Tokyo</option>
+          <option value="Asia/Shanghai">Asia/Shanghai</option>
+          <option value="Asia/Singapore">Asia/Singapore</option>
+          <option value="Asia/Dubai">Asia/Dubai</option>
+          <option value="Asia/Kolkata">Asia/Kolkata</option>
+          <option value="Australia/Sydney">Australia/Sydney</option>
+          <option value="Pacific/Auckland">Pacific/Auckland</option>
+          <option value="UTC">UTC</option>
+        </select>
         <button class="btn btn-primary" id="add-office-btn">Add</button>
       </div>
       <div id="offices-list" style="max-height:300px;overflow-y:auto"></div>
