@@ -164,6 +164,54 @@
       padding: 12px 0;
     }
 
+    /* Room Suggestions */
+    .suggestions-section {
+      margin-top: 16px;
+    }
+
+    .suggestions-section h3 {
+      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--stone);
+      margin-bottom: 12px;
+    }
+
+    .suggestion-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 14px;
+      border-radius: 10px;
+      background: #1a1a1a;
+      margin-bottom: 8px;
+      gap: 12px;
+    }
+
+    .suggestion-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .suggestion-dot.avail { background: var(--teal); }
+    .suggestion-dot.busy { background: var(--red); opacity: 0.6; }
+
+    .suggestion-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+      white-space: nowrap;
+    }
+
+    .suggestion-detail {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--stone);
+      margin-left: auto;
+      white-space: nowrap;
+    }
+
     /* Loading */
     .display-loading {
       display: flex;
@@ -359,6 +407,10 @@
       <div class="display-schedule">
         <h3>Upcoming</h3>
         <div id="d-schedule"></div>
+      </div>
+      <div id="d-suggestions" class="suggestions-section" style="display:none">
+        <h3>Suggested Alternative Rooms</h3>
+        <div id="d-suggestions-list"></div>
       </div>
       <div class="display-qr">
         <img id="d-qr" src="" alt="QR Code">
