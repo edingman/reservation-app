@@ -9,6 +9,15 @@ const roomNumber = params.get('room');
 let roomData = null;
 let bookings = [];
 let selectedDuration = null;
+let officeTimezone = null;
+
+// Navigation data
+let currentMarkerData = null;
+let alternativesData = [];
+
+// Inactivity timer
+let lastActivityTime = Date.now();
+const INACTIVITY_TIMEOUT = 120000; // 120 seconds
 
 // Support both ?id=N and ?office=slug&room=N
 if (!roomId && (!officeSlug || !roomNumber)) {
@@ -46,15 +55,41 @@ async function init() {
   // Auto-refresh every 30 seconds
   setInterval(loadData, 30000);
 
+  // Inactivity check every second
+  setInterval(checkInactivity, 1000);
+
+  // Track activity
+  document.addEventListener('touchstart', resetActivity);
+  document.addEventListener('click', resetActivity);
+
   // Bind Book Now button
   document.getElementById('d-book-now').addEventListener('click', openBookingOverlay);
   document.getElementById('cancel-booking').addEventListener('click', closeBookingOverlay);
   document.getElementById('confirm-book-btn').addEventListener('click', confirmBooking);
 
+  // Bind navigation close
+  document.getElementById('nav-close').addEventListener('click', closeNavOverlay);
+
   // Allow pressing Enter in name field to confirm
   document.getElementById('booker-name').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') confirmBooking();
   });
+}
+
+// ===== Inactivity Auto-Reset =====
+
+function resetActivity() {
+  lastActivityTime = Date.now();
+}
+
+function checkInactivity() {
+  if (Date.now() - lastActivityTime > INACTIVITY_TIMEOUT) {
+    // Close any open overlays
+    closeBookingOverlay();
+    closeNavOverlay();
+    // Reset activity timer so we don't keep firing
+    lastActivityTime = Date.now();
+  }
 }
 
 async function loadData() {
@@ -65,6 +100,7 @@ async function loadData() {
 
     roomData = data.room;
     bookings = data.todaySchedule;
+    officeTimezone = data.timezone || null;
 
     document.getElementById('loading').style.display = 'none';
     const app = document.getElementById('app');
@@ -85,11 +121,11 @@ function render() {
   document.getElementById('d-qr').src = `${API}/api/rooms/${roomId}/qrcode`;
 
   // Status
-  const now = new Date();
+  const now = nowISO();
   const statusEl = document.getElementById('d-status');
   const bookNowBtn = document.getElementById('d-book-now');
   const currentBooking = bookings.find(b =>
-    new Date(b.start_time) <= now && new Date(b.end_time) > now
+    b.start_time <= now && b.end_time > now
   );
 
   if (currentBooking) {
@@ -98,8 +134,7 @@ function render() {
     document.getElementById('d-status-sub').textContent =
       currentBooking.description || currentBooking.booked_by;
 
-    const endTime = new Date(currentBooking.end_time);
-    const minsLeft = Math.ceil((endTime - now) / 60000);
+    const minsLeft = Math.ceil((new Date(currentBooking.end_time) - new Date(now)) / 60000);
     document.getElementById('d-status-detail').textContent =
       `${currentBooking.booked_by} Â· ${minsLeft} min remaining Â· Until ${fmtTime(currentBooking.end_time)}`;
 
@@ -109,9 +144,9 @@ function render() {
     statusEl.className = 'display-status available';
     document.getElementById('d-status-text').textContent = 'AVAILABLE';
 
-    const nextBooking = bookings.find(b => new Date(b.start_time) > now);
+    const nextBooking = bookings.find(b => b.start_time > now);
     const minutesFree = nextBooking
-      ? Math.floor((new Date(nextBooking.start_time) - now) / 60000)
+      ? Math.floor((new Date(nextBooking.start_time) - new Date(now)) / 60000)
       : 90; // Cap at 90 when no upcoming meetings
 
     if (nextBooking) {
@@ -130,13 +165,13 @@ function render() {
 
   // Schedule
   const scheduleEl = document.getElementById('d-schedule');
-  const upcoming = bookings.filter(b => new Date(b.end_time) > now);
+  const upcoming = bookings.filter(b => b.end_time > now);
 
   if (upcoming.length === 0) {
     scheduleEl.innerHTML = '<div class="no-bookings">No more bookings today</div>';
   } else {
     scheduleEl.innerHTML = upcoming.slice(0, 6).map(b => {
-      const isCurrent = new Date(b.start_time) <= now && new Date(b.end_time) > now;
+      const isCurrent = b.start_time <= now && b.end_time > now;
       return `
         <div class="display-schedule-item ${isCurrent ? 'schedule-item-current' : ''}">
           <div class="schedule-item-time">${fmtTime(b.start_time)} â ${fmtTime(b.end_time)}</div>
@@ -164,7 +199,11 @@ async function loadSuggestions() {
   try {
     const res = await fetch(`${API}/api/rooms/${roomId}/alternatives`);
     if (!res.ok) { section.style.display = 'none'; return; }
-    const alternatives = await res.json();
+    const data = await res.json();
+
+    const alternatives = data.alternatives || [];
+    currentMarkerData = data.currentMarker || null;
+    alternativesData = alternatives;
 
     if (alternatives.length === 0) {
       section.style.display = 'none';
@@ -172,7 +211,7 @@ async function loadSuggestions() {
     }
 
     section.style.display = '';
-    list.innerHTML = alternatives.slice(0, 3).map(r => {
+    list.innerHTML = alternatives.slice(0, 3).map((r, idx) => {
       let detail = '';
       if (r.available) {
         detail = r.free_for_mins === null ? 'Free all day' : `Free ${r.free_for_mins} min`;
@@ -184,10 +223,10 @@ async function loadSuggestions() {
         detail = 'Busy';
       }
 
-      const floorTag = r.floor_name ? ` Â· ${escHtml(r.floor_name)}` : '';
+      const floorTag = r.floor_number != null ? ` Â· Floor ${r.floor_number}` : '';
 
       return `
-        <div class="suggestion-item">
+        <div class="suggestion-item" onclick="openNavOverlay(${idx})">
           <div class="suggestion-dot ${r.available ? 'avail' : 'busy'}"></div>
           <span class="suggestion-name">${escHtml(r.name)}</span>
           <span class="suggestion-detail">${detail}${floorTag}</span>
@@ -199,16 +238,92 @@ async function loadSuggestions() {
   }
 }
 
+// ===== Navigation Overlay =====
+
+function openNavOverlay(idx) {
+  resetActivity();
+  const alt = alternativesData[idx];
+  if (!alt) return;
+
+  const overlay = document.getElementById('nav-overlay');
+  const mapContainer = document.getElementById('nav-map-container');
+  const diffFloor = document.getElementById('nav-diff-floor');
+
+  // Set header
+  document.getElementById('nav-room-name').textContent = alt.name;
+  let detailText = '';
+  if (alt.available) {
+    detailText = alt.free_for_mins === null ? 'Available all day' : `Available for ${alt.free_for_mins} min`;
+  } else if (alt.free_at) {
+    detailText = `Free at ${fmtTime(alt.free_at)}`;
+  }
+  document.getElementById('nav-room-detail').textContent = detailText;
+
+  const sameFloor = alt.same_floor && currentMarkerData && alt.floor_plan_id === currentMarkerData.floor_plan_id;
+
+  if (sameFloor && alt.x_percent != null && alt.y_percent != null && currentMarkerData) {
+    // Same floor â show map with both markers and path
+    mapContainer.style.display = '';
+    diffFloor.style.display = 'none';
+
+    document.getElementById('nav-floor-label').textContent =
+      `Floor ${alt.floor_number || ''}${alt.floor_name ? ' â ' + alt.floor_name : ''}`;
+
+    const mapImg = document.getElementById('nav-map-img');
+    mapImg.src = `${API}/api/floorplans/${alt.floor_plan_id}/image`;
+
+    // Position markers
+    const here = document.getElementById('nav-marker-here');
+    here.style.left = currentMarkerData.x_percent + '%';
+    here.style.top = currentMarkerData.y_percent + '%';
+
+    const target = document.getElementById('nav-marker-target');
+    target.style.left = alt.x_percent + '%';
+    target.style.top = alt.y_percent + '%';
+    document.getElementById('nav-marker-target-label').textContent = alt.name;
+
+    // Draw path line
+    const line = document.getElementById('nav-path-line');
+    line.setAttribute('x1', currentMarkerData.x_percent + '%');
+    line.setAttribute('y1', currentMarkerData.y_percent + '%');
+    line.setAttribute('x2', alt.x_percent + '%');
+    line.setAttribute('y2', alt.y_percent + '%');
+  } else if (alt.floor_plan_id && currentMarkerData && !sameFloor) {
+    // Different floor â show floor arrow
+    mapContainer.style.display = 'none';
+    diffFloor.style.display = '';
+
+    const fromFloor = currentMarkerData.floor_number || '?';
+    const toFloor = alt.floor_number || '?';
+    document.getElementById('nav-from-floor').textContent = `You are on Floor ${fromFloor}`;
+    document.getElementById('nav-to-floor').textContent = `Go to Floor ${toFloor}`;
+    document.getElementById('nav-floor-label').textContent = `${alt.floors_away || 1} floor${(alt.floors_away || 1) > 1 ? 's' : ''} away`;
+  } else {
+    // No position data â just show the name/detail (no map)
+    mapContainer.style.display = 'none';
+    diffFloor.style.display = 'none';
+    document.getElementById('nav-floor-label').textContent =
+      alt.floor_number != null ? `Floor ${alt.floor_number}` : '';
+  }
+
+  overlay.classList.add('open');
+}
+
+function closeNavOverlay() {
+  document.getElementById('nav-overlay').classList.remove('open');
+}
+
 // ===== Book Now Overlay =====
 
 function getMinutesFree() {
-  const now = new Date();
-  const nextBooking = bookings.find(b => new Date(b.start_time) > now);
+  const now = nowISO();
+  const nextBooking = bookings.find(b => b.start_time > now);
   if (!nextBooking) return 90; // No upcoming = cap at 90
-  return Math.floor((new Date(nextBooking.start_time) - now) / 60000);
+  return Math.floor((new Date(nextBooking.start_time) - new Date(now)) / 60000);
 }
 
 function openBookingOverlay() {
+  resetActivity();
   selectedDuration = null;
   const minutesFree = getMinutesFree();
 
@@ -239,6 +354,7 @@ function openBookingOverlay() {
   // Bind duration clicks
   grid.querySelectorAll('.duration-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      resetActivity();
       selectedDuration = parseInt(btn.dataset.mins);
       grid.querySelectorAll('.duration-btn').forEach(b => b.classList.remove('selected'));
       btn.classList.add('selected');
@@ -263,6 +379,7 @@ function closeBookingOverlay() {
 }
 
 async function confirmBooking() {
+  resetActivity();
   if (!selectedDuration) return;
 
   const nameInput = document.getElementById('booker-name');
@@ -270,9 +387,9 @@ async function confirmBooking() {
   const bookedBy = name ? name : 'Mysterious Meeting';
   const description = name ? `${name}'s Meeting` : 'Mysterious Meeting';
 
-  const now = new Date();
-  const startTime = toLocalISO(now); // exact current time, no rounding
-  const endTime = toLocalISO(new Date(now.getTime() + selectedDuration * 60000));
+  const startTime = nowISO(); // exact current time in office timezone, no rounding
+  const endMs = new Date(startTime).getTime() + selectedDuration * 60000;
+  const endTime = toTimezoneISO(new Date(endMs), officeTimezone);
 
   const btn = document.getElementById('confirm-book-btn');
   btn.disabled = true;
@@ -344,7 +461,7 @@ function startNoSleepFallback() {
   video.style.height = '1px';
   video.style.opacity = '0.01';
   // Minimal valid mp4 (silent, 1s) encoded as data URI
-  video.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAAhtZGF0AAAA1m1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAAA+gAAAAAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjU4Ljc2LjEwMA==';
+  video.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAAhtZGF0AAAA1m1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAAA+gAAAAAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAQQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjU4Ljc2LjEwMA==';
   document.body.appendChild(video);
   video.play().catch(() => {});
 }
@@ -352,9 +469,9 @@ function startNoSleepFallback() {
 // ===== Helpers =====
 
 function updateClock() {
-  const now = new Date();
-  const h = String(now.getHours()).padStart(2, '0');
-  const m = String(now.getMinutes()).padStart(2, '0');
+  const now = nowISO();
+  const h = now.slice(11, 13);
+  const m = now.slice(14, 16);
   document.getElementById('d-clock').textContent = `${h}:${m}`;
 }
 
@@ -363,18 +480,32 @@ function fmtTime(iso) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function toLocalISO(d) {
-  const Y = d.getFullYear();
-  const M = String(d.getMonth() + 1).padStart(2, '0');
-  const D = String(d.getDate()).padStart(2, '0');
-  const h = String(d.getHours()).padStart(2, '0');
-  const m = String(d.getMinutes()).padStart(2, '0');
-  const s = String(d.getSeconds()).padStart(2, '0');
-  return `${Y}-${M}-${D}T${h}:${m}:${s}`;
+function toTimezoneISO(date, tz) {
+  if (!tz) {
+    // Fallback to browser local time
+    const Y = date.getFullYear();
+    const M = String(date.getMonth() + 1).padStart(2, '0');
+    const D = String(date.getDate()).padStart(2, '0');
+    const h = String(date.getHours()).padStart(2, '0');
+    const m = String(date.getMinutes()).padStart(2, '0');
+    const s = String(date.getSeconds()).padStart(2, '0');
+    return `${Y}-${M}-${D}T${h}:${m}:${s}`;
+  }
+  const parts = {};
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  }).formatToParts(date).forEach(({ type, value }) => { parts[type] = value; });
+  const hour = parts.hour === '24' ? '00' : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}:${parts.second}`;
 }
 
-function localDateStr(d) {
-  return toLocalISO(d).slice(0, 10);
+function nowISO() {
+  return toTimezoneISO(new Date(), officeTimezone);
+}
+
+function todayStr() {
+  return nowISO().slice(0, 10);
 }
 
 function escHtml(str) {
