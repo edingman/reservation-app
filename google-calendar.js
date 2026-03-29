@@ -178,6 +178,220 @@ async function listRoomResources() {
 }
 
 /**
+ * Purge Google Workspace resources not tracked in the portal.
+ * Deletes any calendar resources whose email doesn't match a portal room,
+ * and any buildings whose ID doesn't match a portal office.
+ * Returns a summary of what was removed.
+ */
+async function purgeOrphanedResources() {
+  if (!isConfigured()) return { purged: false };
+
+  const admin = await getAdminClient();
+  const customerId = getSetting('google_customer_id') || 'my_customer';
+  const removed = { rooms: [], buildings: [] };
+
+  // --- Purge orphaned room resources ---
+  const resourceResult = await admin.resources.calendars.list({
+    customer: customerId,
+    maxResults: 500
+  });
+  const googleResources = resourceResult.data.items || [];
+
+  // Get all resource emails tracked in the portal
+  const portalEmails = new Set(
+    db.prepare('SELECT google_resource_email FROM rooms WHERE google_resource_email IS NOT NULL').all()
+      .map(r => r.google_resource_email)
+  );
+
+  for (const resource of googleResources) {
+    if (!portalEmails.has(resource.resourceEmail)) {
+      try {
+        await admin.resources.calendars.delete({
+          customer: customerId,
+          calendarResourceId: resource.resourceId
+        });
+        removed.rooms.push(resource.resourceName || resource.resourceEmail);
+      } catch (err) {
+        console.warn(`Failed to purge orphaned resource "${resource.resourceName}":`, err.message);
+      }
+    }
+  }
+
+  // --- Purge orphaned buildings ---
+  const buildingResult = await admin.resources.buildings.list({
+    customer: customerId,
+    maxResults: 500
+  });
+  const googleBuildings = buildingResult.data.buildings || [];
+
+  const portalBuildingIds = new Set(
+    db.prepare('SELECT google_building_id FROM offices WHERE google_building_id IS NOT NULL').all()
+      .map(o => o.google_building_id)
+  );
+
+  for (const building of googleBuildings) {
+    if (!portalBuildingIds.has(building.buildingId)) {
+      try {
+        await admin.resources.buildings.delete({
+          customer: customerId,
+          buildingId: building.buildingId
+        });
+        removed.buildings.push(building.buildingName || building.buildingId);
+      } catch (err) {
+        console.warn(`Failed to purge orphaned building "${building.buildingName}":`, err.message);
+      }
+    }
+  }
+
+  return { purged: true, removed };
+}
+
+/**
+ * Create a building (office) in Google Workspace.
+ * Returns the buildingId.
+ */
+async function createBuilding(officeName, slug) {
+  if (!isConfigured()) return null;
+
+  const admin = await getAdminClient();
+  const customerId = getSetting('google_customer_id') || 'my_customer';
+
+  const buildingId = slug + '-' + Date.now();
+
+  const result = await admin.resources.buildings.insert({
+    customer: customerId,
+    requestBody: {
+      buildingId,
+      buildingName: officeName,
+      description: `Office: ${officeName}`
+    }
+  });
+
+  return result.data.buildingId;
+}
+
+/**
+ * Delete a building from Google Workspace.
+ */
+async function deleteBuilding(buildingId) {
+  if (!isConfigured() || !buildingId) return;
+
+  const admin = await getAdminClient();
+  const customerId = getSetting('google_customer_id') || 'my_customer';
+
+  await admin.resources.buildings.delete({
+    customer: customerId,
+    buildingId
+  });
+}
+
+/**
+ * Add or update floor names on a Google Workspace building.
+ */
+async function updateBuildingFloors(buildingId, floorNames) {
+  if (!isConfigured() || !buildingId) return;
+
+  const admin = await getAdminClient();
+  const customerId = getSetting('google_customer_id') || 'my_customer';
+
+  await admin.resources.buildings.patch({
+    customer: customerId,
+    buildingId,
+    requestBody: {
+      floorNames
+    }
+  });
+}
+
+/**
+ * Create a room resource in Google Workspace.
+ * Links to building and floor if provided.
+ * Returns the resource email.
+ */
+async function createRoomResource(roomName, capacity, officeName, buildingId, floorName) {
+  if (!isConfigured()) return null;
+
+  const admin = await getAdminClient();
+  const customerId = getSetting('google_customer_id') || 'my_customer';
+
+  const resourceId = roomName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Date.now();
+
+  const resource = {
+    resourceId,
+    resourceName: officeName ? `${roomName} (${officeName})` : roomName,
+    resourceType: 'CONFERENCE_ROOM',
+    capacity: capacity || 1,
+    userVisibleDescription: officeName ? `${roomName} â ${officeName}` : roomName
+  };
+
+  if (buildingId) resource.buildingId = buildingId;
+  if (floorName) resource.floorName = floorName;
+
+  const result = await admin.resources.calendars.insert({
+    customer: customerId,
+    requestBody: resource
+  });
+
+  return result.data.resourceEmail;
+}
+
+/**
+ * Update a room resource in Google Workspace (name, capacity, building, floor).
+ */
+async function updateRoomResource(resourceEmail, { name, capacity, officeName, buildingId, floorName }) {
+  if (!isConfigured() || !resourceEmail) return;
+
+  const admin = await getAdminClient();
+  const customerId = getSetting('google_customer_id') || 'my_customer';
+
+  // Find the resource by email
+  const list = await admin.resources.calendars.list({
+    customer: customerId,
+    maxResults: 500
+  });
+
+  const resource = (list.data.items || []).find(r => r.resourceEmail === resourceEmail);
+  if (!resource) return;
+
+  const patch = {};
+  if (name) patch.resourceName = officeName ? `${name} (${officeName})` : name;
+  if (capacity) patch.capacity = capacity;
+  if (name && officeName) patch.userVisibleDescription = `${name} â ${officeName}`;
+  if (buildingId !== undefined) patch.buildingId = buildingId || '';
+  if (floorName !== undefined) patch.floorName = floorName || '';
+
+  await admin.resources.calendars.patch({
+    customer: customerId,
+    calendarResourceId: resource.resourceId,
+    requestBody: patch
+  });
+}
+
+/**
+ * Delete a room resource from Google Workspace.
+ */
+async function deleteRoomResource(resourceEmail) {
+  if (!isConfigured() || !resourceEmail) return;
+
+  const admin = await getAdminClient();
+  const customerId = getSetting('google_customer_id') || 'my_customer';
+
+  // Find the resource by email
+  const list = await admin.resources.calendars.list({
+    customer: customerId,
+    maxResults: 500
+  });
+
+  const resource = (list.data.items || []).find(r => r.resourceEmail === resourceEmail);
+  if (!resource) return;
+
+  await admin.resources.calendars.delete({
+    customer: customerId,
+    calendarResourceId: resource.resourceId
+  });
+}
+
+/**
  * Fetch events from a room's resource calendar within a time range.
  */
 async function fetchRoomEvents(resourceEmail, timeMin, timeMax) {
@@ -461,10 +675,18 @@ module.exports = {
   deleteEvent,
   checkConnection,
   listRoomResources,
+  createBuilding,
+  deleteBuilding,
+  updateBuildingFloors,
+  createRoomResource,
+  deleteRoomResource,
+  updateRoomResource,
+  purgeOrphanedResources,
   resetClient,
   syncFromGoogle,
   getWebhookToken,
   setupWatches,
   stopAllWatches,
-  getPushStatus
+  getPushStatus,
+  isConfigured
 };
