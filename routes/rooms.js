@@ -96,6 +96,140 @@ router.get('/:id/status', (req, res) => {
   });
 });
 
+// GET /api/rooms/:id/alternatives â suggest other rooms in the same office
+// Sorts by a composite score balancing availability and physical proximity
+router.get('/:id/alternatives', (req, res) => {
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(req.params.id);
+  if (!room) return res.status(404).json({ error: 'Room not found' });
+  if (!room.office_id) return res.json([]);
+
+  const now = toLocalISO(new Date());
+  const todayEnd = now.slice(0, 10) + 'T23:59:59';
+
+  // Get marker position of the current room (for proximity calculation)
+  const thisMarker = db.prepare(`
+    SELECT rm.*, fp.name as floor_name
+    FROM room_markers rm
+    JOIN floor_plans fp ON fp.id = rm.floor_plan_id
+    WHERE rm.room_id = ?
+  `).get(req.params.id);
+
+  // Build an ordered list of floor plan IDs for this office (for floor distance calc)
+  const officeFloors = db.prepare(`
+    SELECT id, name FROM floor_plans WHERE office_id = ? ORDER BY id
+  `).all(room.office_id);
+  const floorIndex = {};
+  officeFloors.forEach((fp, i) => { floorIndex[fp.id] = i; });
+
+  // Get all other rooms in the same office, with their marker positions and floor name
+  const otherRooms = db.prepare(`
+    SELECT r.*, o.slug as office_slug,
+           rm.floor_plan_id, rm.x_percent, rm.y_percent,
+           fp.name as floor_name
+    FROM rooms r
+    LEFT JOIN offices o ON o.id = r.office_id
+    LEFT JOIN room_markers rm ON rm.room_id = r.id
+    LEFT JOIN floor_plans fp ON fp.id = rm.floor_plan_id
+    WHERE r.office_id = ? AND r.id != ?
+    ORDER BY r.room_number
+  `).all(room.office_id, req.params.id);
+
+  const alternatives = otherRooms.map(r => {
+    // --- Availability ---
+    const currentBooking = db.prepare(`
+      SELECT * FROM bookings
+      WHERE room_id = ? AND start_time <= ? AND end_time > ?
+      ORDER BY start_time LIMIT 1
+    `).get(r.id, now, now);
+
+    const searchFrom = currentBooking ? currentBooking.end_time : now;
+    const nextBooking = db.prepare(`
+      SELECT * FROM bookings
+      WHERE room_id = ? AND start_time > ? AND start_time < ?
+      ORDER BY start_time LIMIT 1
+    `).get(r.id, searchFrom, todayEnd);
+
+    let available, freeAt, freeAtMins, freeForMins;
+
+    if (currentBooking) {
+      freeAt = currentBooking.end_time;
+      const backToBack = db.prepare(`
+        SELECT * FROM bookings
+        WHERE room_id = ? AND start_time <= ? AND end_time > ?
+        ORDER BY start_time LIMIT 1
+      `).get(r.id, freeAt, freeAt);
+
+      available = false;
+      freeAt = backToBack ? null : freeAt;
+      freeAtMins = backToBack ? null : Math.ceil((new Date(currentBooking.end_time) - new Date(now)) / 60000);
+      freeForMins = backToBack ? 0 : (nextBooking ? Math.floor((new Date(nextBooking.start_time) - new Date(currentBooking.end_time)) / 60000) : null);
+    } else {
+      available = true;
+      freeAt = null;
+      freeAtMins = 0;
+      freeForMins = nextBooking
+        ? Math.floor((new Date(nextBooking.start_time) - new Date(now)) / 60000)
+        : null;
+    }
+
+    // --- Proximity ---
+    let sameFloor = false;
+    let floorDistance = null; // how many floors apart (0 = same floor)
+    let distance = null;     // euclidean distance on floor plan (same floor only)
+    const floorName = r.floor_name || null;
+
+    if (thisMarker && r.floor_plan_id != null) {
+      if (thisMarker.floor_plan_id === r.floor_plan_id) {
+        sameFloor = true;
+        floorDistance = 0;
+        const dx = thisMarker.x_percent - r.x_percent;
+        const dy = thisMarker.y_percent - r.y_percent;
+        distance = Math.sqrt(dx * dx + dy * dy);
+      } else {
+        sameFloor = false;
+        // Calculate how many floors apart based on ordered floor plan list
+        const thisIdx = floorIndex[thisMarker.floor_plan_id];
+        const otherIdx = floorIndex[r.floor_plan_id];
+        floorDistance = (thisIdx != null && otherIdx != null)
+          ? Math.abs(thisIdx - otherIdx)
+          : 1; // fallback: assume 1 floor apart
+      }
+    }
+
+    // --- Composite score (lower = better) ---
+    const waitMins = available ? 0 : (freeAtMins ?? 999);
+
+    // 10 points per floor of distance; 0 if same floor
+    // distance_cost on same floor: ~20% apart â 1 min equivalent
+    const floorPenalty = (floorDistance ?? 1) * 10;
+    const distanceCost = (sameFloor && distance != null) ? distance * 0.15 : 0;
+    const busyAllDay = (!available && freeAt === null) ? 100 : 0;
+
+    const score = waitMins + floorPenalty + distanceCost + busyAllDay;
+
+    return {
+      id: r.id,
+      name: r.name,
+      capacity: r.capacity,
+      room_number: r.room_number,
+      office_slug: r.office_slug,
+      available,
+      free_at: freeAt,
+      free_at_mins: freeAtMins,
+      free_for_mins: freeForMins,
+      same_floor: sameFloor,
+      floor_name: floorName,
+      floors_away: floorDistance,
+      distance: distance != null ? Math.round(distance) : null,
+      score: Math.round(score * 10) / 10
+    };
+  });
+
+  alternatives.sort((a, b) => a.score - b.score);
+
+  res.json(alternatives);
+});
+
 // GET /api/rooms/:roomId/bookings â bookings for a room on a date
 router.get('/:roomId/bookings', (req, res) => {
   const { date } = req.query;
