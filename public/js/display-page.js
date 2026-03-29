@@ -36,6 +36,9 @@ async function resolveRoom() {
 async function init() {
   await loadData();
 
+  // Keep screen on
+  requestWakeLock();
+
   // Start clock
   updateClock();
   setInterval(updateClock, 1000);
@@ -142,6 +145,57 @@ function render() {
         </div>
       `;
     }).join('');
+  }
+
+  // Load room suggestions when occupied
+  if (currentBooking) {
+    loadSuggestions();
+  } else {
+    document.getElementById('d-suggestions').style.display = 'none';
+  }
+}
+
+// ===== Room Suggestions =====
+
+async function loadSuggestions() {
+  const section = document.getElementById('d-suggestions');
+  const list = document.getElementById('d-suggestions-list');
+
+  try {
+    const res = await fetch(`${API}/api/rooms/${roomId}/alternatives`);
+    if (!res.ok) { section.style.display = 'none'; return; }
+    const alternatives = await res.json();
+
+    if (alternatives.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = '';
+    list.innerHTML = alternatives.slice(0, 3).map(r => {
+      let detail = '';
+      if (r.available) {
+        detail = r.free_for_mins === null ? 'Free all day' : `Free ${r.free_for_mins} min`;
+      } else if (r.free_at && r.free_at_mins != null && r.free_at_mins <= 30) {
+        detail = `Free in ${r.free_at_mins} min`;
+      } else if (r.free_at) {
+        detail = `Free at ${fmtTime(r.free_at)}`;
+      } else {
+        detail = 'Busy';
+      }
+
+      const floorTag = r.floor_name ? ` Â· ${escHtml(r.floor_name)}` : '';
+
+      return `
+        <div class="suggestion-item">
+          <div class="suggestion-dot ${r.available ? 'avail' : 'busy'}"></div>
+          <span class="suggestion-name">${escHtml(r.name)}</span>
+          <span class="suggestion-detail">${detail}${floorTag}</span>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    section.style.display = 'none';
   }
 }
 
@@ -252,6 +306,47 @@ async function confirmBooking() {
     btn.disabled = false;
     btn.textContent = 'Confirm';
   }
+}
+
+// ===== Wake Lock (keep screen on) =====
+
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if ('wakeLock' in navigator) {
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } catch (err) {
+      console.warn('Wake Lock failed:', err.message);
+    }
+  } else {
+    // Fallback: play a tiny silent video in a loop to prevent sleep
+    startNoSleepFallback();
+  }
+}
+
+// Re-acquire wake lock when page becomes visible again (e.g. after tab switch)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && !wakeLock) {
+    requestWakeLock();
+  }
+});
+
+// Fallback for older iPads that don't support Wake Lock API
+function startNoSleepFallback() {
+  const video = document.createElement('video');
+  video.setAttribute('playsinline', '');
+  video.setAttribute('muted', '');
+  video.setAttribute('loop', '');
+  video.style.position = 'fixed';
+  video.style.width = '1px';
+  video.style.height = '1px';
+  video.style.opacity = '0.01';
+  // Minimal valid mp4 (silent, 1s) encoded as data URI
+  video.src = 'data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAAIZnJlZQAAAAhtZGF0AAAA1m1vb3YAAABsbXZoZAAAAAAAAAAAAAAAAAAAA+gAAAAAAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAABidWR0YQAAAFptZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAAC1pbHN0AAAAJal0b28AAAAdZGF0YQAAAAEAAAAATGF2ZjU4Ljc2LjEwMA==';
+  document.body.appendChild(video);
+  video.play().catch(() => {});
 }
 
 // ===== Helpers =====
