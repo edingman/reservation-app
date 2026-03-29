@@ -1,10 +1,24 @@
 const { google } = require('googleapis');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const db = require('./db');
 
 let calendarClient = null;
 let adminClient = null;
+
+// Webhook verification token â generated once and persisted
+function getWebhookToken() {
+  let token = getSetting('google_webhook_token');
+  if (!token) {
+    token = crypto.randomBytes(32).toString('hex');
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('google_webhook_token', ?)").run(token);
+  }
+  return token;
+}
+
+// Track active watch channels for renewal
+let watchRenewalTimer = null;
 
 function getSetting(key) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
@@ -73,7 +87,7 @@ async function createEvent(room, booking) {
   const timezone = getSetting('timezone') || 'UTC';
 
   const event = {
-    summary: `${booking.description || 'Room Booking'} — ${room.name}`,
+    summary: `${booking.description || 'Room Booking'} â ${room.name}`,
     description: `Booked by: ${booking.booked_by}\nRoom: ${room.name}`,
     location: room.name,
     start: { dateTime: booking.start_time, timeZone: timezone },
@@ -163,10 +177,294 @@ async function listRoomResources() {
   }));
 }
 
+/**
+ * Fetch events from a room's resource calendar within a time range.
+ */
+async function fetchRoomEvents(resourceEmail, timeMin, timeMax) {
+  if (!isConfigured()) return [];
+
+  const calendar = await getCalendarClient();
+  const events = [];
+  let pageToken = null;
+
+  do {
+    const result = await calendar.events.list({
+      calendarId: resourceEmail,
+      timeMin,
+      timeMax,
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 250,
+      pageToken
+    });
+
+    if (result.data.items) {
+      events.push(...result.data.items);
+    }
+    pageToken = result.data.nextPageToken;
+  } while (pageToken);
+
+  return events;
+}
+
+/**
+ * Sync events FROM Google Calendar into the local database.
+ * Imports room bookings made directly in Google Calendar.
+ * Returns stats about what was synced.
+ */
+async function syncFromGoogle() {
+  if (!isConfigured()) {
+    return { synced: false, reason: 'Google Calendar not configured' };
+  }
+
+  const rooms = db.prepare('SELECT * FROM rooms WHERE google_resource_email IS NOT NULL AND google_resource_email != ""').all();
+  if (rooms.length === 0) {
+    return { synced: false, reason: 'No rooms linked to Google Calendar resources' };
+  }
+
+  const delegatedUser = getSetting('google_delegated_user');
+
+  // Sync window: from now to 30 days ahead (and 1 day back for recent changes)
+  const now = new Date();
+  const timeMin = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const timeMax = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+  let imported = 0;
+  let removed = 0;
+  let skipped = 0;
+  const errors = [];
+
+  for (const room of rooms) {
+    try {
+      const events = await fetchRoomEvents(room.google_resource_email, timeMin, timeMax);
+
+      // Get all google_event_ids for imported bookings for this room
+      const existingImports = db.prepare(
+        "SELECT google_event_id FROM bookings WHERE room_id = ? AND google_event_id IS NOT NULL"
+      ).all(room.id).map(b => b.google_event_id);
+
+      const existingSet = new Set(existingImports);
+      const googleEventIds = new Set();
+
+      for (const event of events) {
+        if (!event.id || event.status === 'cancelled') continue;
+
+        googleEventIds.add(event.id);
+
+        // Skip if we already have this event
+        if (existingSet.has(event.id)) {
+          skipped++;
+          continue;
+        }
+
+        // Extract start/end times
+        const startTime = event.start?.dateTime || event.start?.date;
+        const endTime = event.end?.dateTime || event.end?.date;
+        if (!startTime || !endTime) continue;
+
+        // Respect private/confidential events â show who, but not what
+        const isPrivate = event.visibility === 'private' || event.visibility === 'confidential';
+        const rawName = event.organizer?.displayName || event.creator?.displayName || null;
+        const rawEmail = event.organizer?.email || event.creator?.email || null;
+        // Extract first name: from displayName ("Edvin Ingman" â "Edvin") or email ("edvin.ingman@..." â "Edvin")
+        const firstName = rawName
+          ? rawName.split(/\s/)[0]
+          : rawEmail
+            ? rawEmail.split('@')[0].split(/[._-]/)[0].replace(/^./, c => c.toUpperCase())
+            : null;
+        const bookedBy = isPrivate
+          ? (firstName || 'Private')
+          : (rawName || rawEmail || 'Google Calendar');
+        const description = isPrivate
+          ? `${firstName ? firstName + "'s" : ''} Confidential Meeting`.trim()
+          : (event.summary || 'Google Calendar Booking');
+
+        // Check for time conflicts with local bookings
+        const conflict = db.prepare(`
+          SELECT COUNT(*) as count FROM bookings
+          WHERE room_id = ? AND start_time < ? AND end_time > ? AND source = 'local'
+        `).get(room.id, endTime, startTime);
+
+        if (conflict.count > 0) {
+          skipped++;
+          continue;
+        }
+
+        // Insert the imported booking
+        db.prepare(`
+          INSERT INTO bookings (room_id, booked_by, description, start_time, end_time, google_event_id, source)
+          VALUES (?, ?, ?, ?, ?, ?, 'google_calendar')
+        `).run(room.id, bookedBy, description, startTime, endTime, event.id);
+
+        imported++;
+      }
+
+      // Remove imported bookings that no longer exist in Google Calendar
+      const importedBookings = db.prepare(
+        "SELECT id, google_event_id FROM bookings WHERE room_id = ? AND source = 'google_calendar' AND google_event_id IS NOT NULL AND start_time >= ?"
+      ).all(room.id, timeMin);
+
+      for (const booking of importedBookings) {
+        if (!googleEventIds.has(booking.google_event_id)) {
+          db.prepare('DELETE FROM bookings WHERE id = ?').run(booking.id);
+          removed++;
+        }
+      }
+    } catch (err) {
+      errors.push(`Room "${room.name}": ${err.message}`);
+    }
+  }
+
+  // Store last sync time
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_google_sync', ?)").run(new Date().toISOString());
+
+  return { synced: true, imported, removed, skipped, errors };
+}
+
+// ===== Push Notifications (Watch Channels) =====
+
+/**
+ * Set up watch channels for all linked room resource calendars.
+ * Google will POST to our webhook when events change.
+ * Requires base_url to be configured (server must be reachable from internet).
+ */
+async function setupWatches() {
+  if (!isConfigured()) {
+    throw new Error('Google Calendar not configured');
+  }
+
+  const baseUrl = getSetting('base_url');
+  if (!baseUrl) {
+    throw new Error('Base URL not configured â required for push notifications');
+  }
+
+  const webhookUrl = `${baseUrl.replace(/\/$/, '')}/api/webhooks/google-calendar`;
+  const rooms = db.prepare('SELECT * FROM rooms WHERE google_resource_email IS NOT NULL AND google_resource_email != ""').all();
+
+  if (rooms.length === 0) {
+    throw new Error('No rooms linked to Google Calendar resources');
+  }
+
+  const calendar = await getCalendarClient();
+  const token = getWebhookToken();
+  let watchCount = 0;
+  const errors = [];
+
+  // Stop existing watches first
+  await stopAllWatches();
+
+  for (const room of rooms) {
+    try {
+      const channelId = `room-${room.id}-${Date.now()}`;
+      // Watch expires in 7 days (Google max is ~30 days, 7 is safe)
+      const expiration = Date.now() + 7 * 24 * 60 * 60 * 1000;
+
+      const result = await calendar.events.watch({
+        calendarId: room.google_resource_email,
+        requestBody: {
+          id: channelId,
+          type: 'web_hook',
+          address: webhookUrl,
+          token: token,
+          expiration: String(expiration)
+        }
+      });
+
+      // Store channel info for renewal/cleanup
+      db.prepare(`
+        INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)
+      `).run(`watch_channel_${room.id}`, JSON.stringify({
+        channelId: result.data.id,
+        resourceId: result.data.resourceId,
+        expiration: result.data.expiration,
+        roomEmail: room.google_resource_email
+      }));
+
+      watchCount++;
+    } catch (err) {
+      errors.push(`Room "${room.name}": ${err.message}`);
+    }
+  }
+
+  // Schedule renewal before expiry (renew after 6 days)
+  if (watchCount > 0) {
+    const RENEWAL_INTERVAL = 6 * 24 * 60 * 60 * 1000;
+    if (watchRenewalTimer) clearTimeout(watchRenewalTimer);
+    watchRenewalTimer = setTimeout(async () => {
+      try {
+        console.log('[Google Sync] Renewing push notification watches...');
+        await setupWatches();
+      } catch (err) {
+        console.log('[Google Sync] Watch renewal failed:', err.message);
+      }
+    }, RENEWAL_INTERVAL);
+
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('push_notifications_active', 'true')").run();
+    console.log(`[Google Sync] Push notifications active for ${watchCount} room(s) â webhook: ${webhookUrl}`);
+  }
+
+  return { watchCount, errors };
+}
+
+/**
+ * Stop all active watch channels.
+ */
+async function stopAllWatches() {
+  if (!isConfigured()) return;
+
+  const calendar = await getCalendarClient();
+  const rows = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'watch_channel_%'").all();
+
+  for (const row of rows) {
+    try {
+      const channel = JSON.parse(row.value);
+      await calendar.channels.stop({
+        requestBody: {
+          id: channel.channelId,
+          resourceId: channel.resourceId
+        }
+      });
+    } catch (err) {
+      // Channel may already be expired â that's fine
+    }
+    db.prepare("DELETE FROM settings WHERE key = ?").run(row.key);
+  }
+
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('push_notifications_active', 'false')").run();
+
+  if (watchRenewalTimer) {
+    clearTimeout(watchRenewalTimer);
+    watchRenewalTimer = null;
+  }
+}
+
+/**
+ * Get push notification status for the frontend.
+ */
+function getPushStatus() {
+  const active = getSetting('push_notifications_active') === 'true';
+  const channels = db.prepare("SELECT key, value FROM settings WHERE key LIKE 'watch_channel_%'").all();
+  return {
+    active,
+    channelCount: channels.length,
+    channels: channels.map(r => {
+      try {
+        const ch = JSON.parse(r.value);
+        return { roomEmail: ch.roomEmail, expiration: ch.expiration };
+      } catch { return null; }
+    }).filter(Boolean)
+  };
+}
+
 module.exports = {
   createEvent,
   deleteEvent,
   checkConnection,
   listRoomResources,
-  resetClient
+  resetClient,
+  syncFromGoogle,
+  getWebhookToken,
+  setupWatches,
+  stopAllWatches,
+  getPushStatus
 };
