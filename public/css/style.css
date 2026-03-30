@@ -514,6 +514,37 @@ h3 { font-size: 1.1rem; font-weight: 600; }
   margin-top: 12px;
 }
 
+.select-office-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  color: var(--stone);
+  text-align: center;
+}
+.select-office-prompt h3 {
+  margin-top: 16px;
+  font-size: 1.1rem;
+  color: var(--black);
+}
+.select-office-prompt p {
+  margin-top: 4px;
+  font-size: 0.85rem;
+}
+
+.qr-section-label {
+  grid-column: 1 / -1;
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--stone);
+  padding: 8px 0 0;
+  border-bottom: 1px solid var(--stone-lighter);
+  padding-bottom: 8px;
+}
+
 /* ===== Settings ===== */
 .settings-section {
   background: var(--white);
