@@ -101,6 +101,19 @@ router.post('/google-key', uploadKey.single('keyfile'), (req, res) => {
 router.get('/google-status', async (req, res) => {
   try {
     const status = await googleCalendar.checkConnection();
+
+    // On successful connection, purge orphaned Google resources not in the portal
+    if (status.connected) {
+      try {
+        const purgeResult = await googleCalendar.purgeOrphanedResources();
+        if (purgeResult.purged) {
+          status.purged = purgeResult.removed;
+        }
+      } catch (err) {
+        console.warn('Failed to purge orphaned Google resources:', err.message);
+      }
+    }
+
     res.json(status);
   } catch (err) {
     res.json({ connected: false, error: err.message });
