@@ -358,6 +358,152 @@
       font-family: var(--font-sans);
     }
     .cancel-link:hover { color: var(--white); }
+
+    /* Navigation Overlay */
+    .nav-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.92);
+      z-index: 300;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+    }
+    .nav-overlay.open { display: flex; }
+
+    .nav-header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .nav-header h2 {
+      font-size: 1.6rem;
+      font-weight: 900;
+      margin-bottom: 4px;
+    }
+    .nav-header .nav-sub {
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      color: var(--stone);
+    }
+    .nav-floor-label {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--teal);
+      margin-bottom: 12px;
+      letter-spacing: 0.05em;
+    }
+
+    .nav-map-container {
+      position: relative;
+      width: 70vw;
+      max-width: 700px;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #222;
+    }
+    .nav-map-container img {
+      width: 100%;
+      display: block;
+      opacity: 0.7;
+    }
+
+    /* Markers on nav map */
+    .nav-marker {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      z-index: 2;
+    }
+    .nav-marker-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 3px solid var(--white);
+    }
+    .nav-marker-dot.here { background: var(--red); }
+    .nav-marker-dot.target { background: var(--teal); }
+    .nav-marker-label {
+      position: absolute;
+      top: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.7rem;
+      font-weight: 700;
+      white-space: nowrap;
+      background: rgba(0,0,0,0.8);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    /* Pulse ring animation */
+    .nav-marker-pulse {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 2px solid var(--teal);
+      animation: navPulse 2s ease-out infinite;
+    }
+    @keyframes navPulse {
+      0% { width: 18px; height: 18px; opacity: 1; }
+      100% { width: 60px; height: 60px; opacity: 0; }
+    }
+
+    /* Dashed path line */
+    .nav-path {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .nav-path line {
+      stroke: var(--white);
+      stroke-width: 2;
+      stroke-dasharray: 8, 6;
+      stroke-linecap: round;
+      opacity: 0.5;
+    }
+
+    /* Different floor message */
+    .nav-diff-floor {
+      text-align: center;
+      padding: 32px;
+      max-width: 400px;
+    }
+    .nav-diff-floor .floor-arrow {
+      font-size: 3rem;
+      margin: 16px 0;
+    }
+    .nav-diff-floor .floor-label {
+      font-family: var(--font-mono);
+      font-size: 1.2rem;
+      margin: 4px 0;
+    }
+    .nav-diff-floor .floor-label.from { color: var(--red); }
+    .nav-diff-floor .floor-label.to { color: var(--teal); }
+
+    .nav-close {
+      margin-top: 24px;
+      font-size: 0.9rem;
+      color: var(--stone);
+      cursor: pointer;
+      border: none;
+      background: none;
+      font-family: var(--font-sans);
+    }
+    .nav-close:hover { color: var(--white); }
+
+    /* Clickable suggestions */
+    .suggestion-item { cursor: pointer; transition: background 150ms ease; }
+    .suggestion-item:hover { background: #252525; }
+    .suggestion-item:active { background: #303030; }
   </style>
 </head>
 <body>
@@ -401,6 +547,34 @@
 
         <button class="cancel-link" id="cancel-booking">Cancel</button>
       </div>
+    </div>
+
+    <!-- Navigation Overlay -->
+    <div class="nav-overlay" id="nav-overlay">
+      <div class="nav-header">
+        <h2 id="nav-room-name"></h2>
+        <div class="nav-sub" id="nav-room-detail"></div>
+      </div>
+      <div class="nav-floor-label" id="nav-floor-label"></div>
+      <div class="nav-map-container" id="nav-map-container" style="display:none">
+        <img id="nav-map-img" src="" alt="Floor Plan">
+        <svg class="nav-path" id="nav-path"><line id="nav-path-line"/></svg>
+        <div class="nav-marker" id="nav-marker-here">
+          <div class="nav-marker-dot here"></div>
+          <div class="nav-marker-label">You are here</div>
+        </div>
+        <div class="nav-marker" id="nav-marker-target">
+          <div class="nav-marker-dot target"></div>
+          <div class="nav-marker-pulse"></div>
+          <div class="nav-marker-label" id="nav-marker-target-label"></div>
+        </div>
+      </div>
+      <div class="nav-diff-floor" id="nav-diff-floor" style="display:none">
+        <div class="floor-label from" id="nav-from-floor"></div>
+        <div class="floor-arrow">â</div>
+        <div class="floor-label to" id="nav-to-floor"></div>
+      </div>
+      <button class="nav-close" id="nav-close">Close</button>
     </div>
 
     <div class="display-bottom">
