@@ -1,22 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-
-function toLocalISO(d) {
-  const Y = d.getFullYear();
-  const M = String(d.getMonth() + 1).padStart(2, '0');
-  const D = String(d.getDate()).padStart(2, '0');
-  const h = String(d.getHours()).padStart(2, '0');
-  const m = String(d.getMinutes()).padStart(2, '0');
-  const s = String(d.getSeconds()).padStart(2, '0');
-  return `${Y}-${M}-${D}T${h}:${m}:${s}`;
-}
+const googleCalendar = require('../google-calendar');
+const { nowInTimezone } = require('../tz');
 
 // GET /api/rooms â list all rooms (optionally filter by office_id)
 router.get('/', (req, res) => {
   const { office_id } = req.query;
   let sql = `
-    SELECT r.*, rm.floor_plan_id, rm.x_percent, rm.y_percent, o.name as office_name, o.slug as office_slug
+    SELECT r.*, rm.floor_plan_id, rm.x_percent, rm.y_percent, o.name as office_name, o.slug as office_slug, o.timezone as office_timezone
     FROM rooms r
     LEFT JOIN room_markers rm ON rm.room_id = r.id
     LEFT JOIN offices o ON o.id = r.office_id
@@ -62,14 +54,15 @@ router.get('/:id', (req, res) => {
 // GET /api/rooms/:id/status â room status for mobile/display pages
 router.get('/:id/status', (req, res) => {
   const room = db.prepare(`
-    SELECT r.*, o.name as office_name, o.slug as office_slug
+    SELECT r.*, o.name as office_name, o.slug as office_slug, o.timezone as office_timezone
     FROM rooms r
     LEFT JOIN offices o ON o.id = r.office_id
     WHERE r.id = ?
   `).get(req.params.id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
 
-  const now = toLocalISO(new Date());
+  const tz = room.office_timezone || 'Europe/Stockholm';
+  const now = nowInTimezone(tz);
   const todayStart = now.slice(0, 10) + 'T00:00:00';
   const todayEnd = now.slice(0, 10) + 'T23:59:59';
 
@@ -88,6 +81,7 @@ router.get('/:id/status', (req, res) => {
 
   res.json({
     room,
+    timezone: tz,
     currentStatus: {
       available: !currentBooking,
       currentBooking: currentBooking || null
@@ -99,16 +93,17 @@ router.get('/:id/status', (req, res) => {
 // GET /api/rooms/:id/alternatives â suggest other rooms in the same office
 // Sorts by a composite score balancing availability and physical proximity
 router.get('/:id/alternatives', (req, res) => {
-  const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(req.params.id);
+  const room = db.prepare('SELECT r.*, o.timezone FROM rooms r LEFT JOIN offices o ON o.id = r.office_id WHERE r.id = ?').get(req.params.id);
   if (!room) return res.status(404).json({ error: 'Room not found' });
   if (!room.office_id) return res.json([]);
 
-  const now = toLocalISO(new Date());
+  const tz = room.timezone || 'Europe/Stockholm';
+  const now = nowInTimezone(tz);
   const todayEnd = now.slice(0, 10) + 'T23:59:59';
 
   // Get marker position of the current room (for proximity calculation)
   const thisMarker = db.prepare(`
-    SELECT rm.*, fp.name as floor_name
+    SELECT rm.*, fp.floor_number, fp.name as floor_name
     FROM room_markers rm
     JOIN floor_plans fp ON fp.id = rm.floor_plan_id
     WHERE rm.room_id = ?
@@ -116,16 +111,16 @@ router.get('/:id/alternatives', (req, res) => {
 
   // Build an ordered list of floor plan IDs for this office (for floor distance calc)
   const officeFloors = db.prepare(`
-    SELECT id, name FROM floor_plans WHERE office_id = ? ORDER BY id
+    SELECT id, floor_number FROM floor_plans WHERE office_id = ? ORDER BY floor_number
   `).all(room.office_id);
   const floorIndex = {};
-  officeFloors.forEach((fp, i) => { floorIndex[fp.id] = i; });
+  officeFloors.forEach((fp) => { floorIndex[fp.id] = fp.floor_number; });
 
-  // Get all other rooms in the same office, with their marker positions and floor name
+  // Get all other rooms in the same office, with their marker positions and floor info
   const otherRooms = db.prepare(`
     SELECT r.*, o.slug as office_slug,
            rm.floor_plan_id, rm.x_percent, rm.y_percent,
-           fp.name as floor_name
+           fp.floor_number, fp.name as floor_name
     FROM rooms r
     LEFT JOIN offices o ON o.id = r.office_id
     LEFT JOIN room_markers rm ON rm.room_id = r.id
@@ -218,7 +213,11 @@ router.get('/:id/alternatives', (req, res) => {
       free_at_mins: freeAtMins,
       free_for_mins: freeForMins,
       same_floor: sameFloor,
+      floor_number: r.floor_number || null,
       floor_name: floorName,
+      floor_plan_id: r.floor_plan_id || null,
+      x_percent: r.x_percent != null ? Math.round(r.x_percent * 10) / 10 : null,
+      y_percent: r.y_percent != null ? Math.round(r.y_percent * 10) / 10 : null,
       floors_away: floorDistance,
       distance: distance != null ? Math.round(distance) : null,
       score: Math.round(score * 10) / 10
@@ -227,7 +226,16 @@ router.get('/:id/alternatives', (req, res) => {
 
   alternatives.sort((a, b) => a.score - b.score);
 
-  res.json(alternatives);
+  // Include current room marker info for navigation
+  const currentMarker = thisMarker ? {
+    floor_plan_id: thisMarker.floor_plan_id,
+    x_percent: Math.round(thisMarker.x_percent * 10) / 10,
+    y_percent: Math.round(thisMarker.y_percent * 10) / 10,
+    floor_number: thisMarker.floor_number || null,
+    floor_name: thisMarker.floor_name || null
+  } : null;
+
+  res.json({ alternatives, currentMarker });
 });
 
 // GET /api/rooms/:roomId/bookings â bookings for a room on a date
@@ -248,25 +256,47 @@ router.get('/:roomId/bookings', (req, res) => {
 });
 
 // POST /api/rooms â create a room
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { name, capacity, amenities, google_resource_email, office_id } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
   if (!office_id) return res.status(400).json({ error: 'office_id is required' });
+
+  const office = db.prepare('SELECT * FROM offices WHERE id = ?').get(office_id);
+  if (!office) return res.status(404).json({ error: 'Office not found' });
 
   // Auto-assign room_number within office
   const maxNum = db.prepare('SELECT MAX(room_number) as max FROM rooms WHERE office_id = ?').get(office_id);
   const roomNumber = (maxNum.max || 0) + 1;
 
+  // If no google_resource_email provided, auto-create one in Google Workspace
+  let resourceEmail = google_resource_email || null;
+  let googleAutoCreated = false;
+  if (!resourceEmail && googleCalendar.isConfigured()) {
+    try {
+      resourceEmail = await googleCalendar.createRoomResource(
+        name,
+        capacity || 1,
+        office.name,
+        office.google_building_id || null,
+        null // floor name assigned later when room is placed on a floor plan
+      );
+      googleAutoCreated = true;
+    } catch (err) {
+      console.warn('Auto-create Google Calendar resource failed (room still created locally):', err.message);
+    }
+  }
+
   try {
     const result = db.prepare(`
       INSERT INTO rooms (name, capacity, amenities, google_resource_email, office_id, room_number)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(name, capacity || 1, amenities || '', google_resource_email || null, office_id, roomNumber);
+    `).run(name, capacity || 1, amenities || '', resourceEmail, office_id, roomNumber);
     const room = db.prepare(`
       SELECT r.*, o.name as office_name, o.slug as office_slug
       FROM rooms r LEFT JOIN offices o ON o.id = r.office_id
       WHERE r.id = ?
     `).get(result.lastInsertRowid);
+    room.google_auto_created = googleAutoCreated;
     res.status(201).json(room);
   } catch (err) {
     if (err.message.includes('UNIQUE')) {
@@ -277,7 +307,7 @@ router.post('/', (req, res) => {
 });
 
 // PUT /api/rooms/:id â update a room
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   const { name, capacity, amenities, google_resource_email, office_id } = req.body;
   const existing = db.prepare('SELECT * FROM rooms WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Room not found' });
@@ -308,10 +338,25 @@ router.put('/:id', (req, res) => {
       req.params.id
     );
     const room = db.prepare(`
-      SELECT r.*, o.name as office_name, o.slug as office_slug
+      SELECT r.*, o.name as office_name, o.slug as office_slug, o.google_building_id
       FROM rooms r LEFT JOIN offices o ON o.id = r.office_id
       WHERE r.id = ?
     `).get(req.params.id);
+
+    // Sync changes to Google Calendar resource
+    if (room.google_resource_email && googleCalendar.isConfigured()) {
+      try {
+        await googleCalendar.updateRoomResource(room.google_resource_email, {
+          name: room.name,
+          capacity: room.capacity,
+          officeName: room.office_name,
+          buildingId: room.google_building_id
+        });
+      } catch (err) {
+        console.warn('Failed to sync room update to Google:', err.message);
+      }
+    }
+
     res.json(room);
   } catch (err) {
     if (err.message.includes('UNIQUE')) {
@@ -322,16 +367,25 @@ router.put('/:id', (req, res) => {
 });
 
 // DELETE /api/rooms/:id â delete a room
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   const existing = db.prepare('SELECT * FROM rooms WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Room not found' });
+
+  // Delete Google Calendar resource if it exists
+  if (existing.google_resource_email && googleCalendar.isConfigured()) {
+    try {
+      await googleCalendar.deleteRoomResource(existing.google_resource_email);
+    } catch (err) {
+      console.warn('Failed to delete Google Calendar resource:', err.message);
+    }
+  }
 
   db.prepare('DELETE FROM rooms WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
 
 // PUT /api/rooms/:roomId/marker â set/update marker position
-router.put('/:roomId/marker', (req, res) => {
+router.put('/:roomId/marker', async (req, res) => {
   const { floor_plan_id, x_percent, y_percent } = req.body;
   if (!floor_plan_id || x_percent == null || y_percent == null) {
     return res.status(400).json({ error: 'floor_plan_id, x_percent, y_percent required' });
@@ -353,12 +407,37 @@ router.put('/:roomId/marker', (req, res) => {
     `).run(req.params.roomId, floor_plan_id, x_percent, y_percent);
   }
 
+  // Sync floor name to Google Calendar resource
+  if (room.google_resource_email && googleCalendar.isConfigured()) {
+    try {
+      const floorPlan = db.prepare('SELECT floor_number FROM floor_plans WHERE id = ?').get(floor_plan_id);
+      const office = db.prepare('SELECT google_building_id FROM offices WHERE id = ?').get(room.office_id);
+      await googleCalendar.updateRoomResource(room.google_resource_email, {
+        floorName: floorPlan ? String(floorPlan.floor_number) : '',
+        buildingId: office ? office.google_building_id : null
+      });
+    } catch (err) {
+      console.warn('Failed to sync floor name to Google:', err.message);
+    }
+  }
+
   res.json({ success: true });
 });
 
 // DELETE /api/rooms/:roomId/marker â remove marker
-router.delete('/:roomId/marker', (req, res) => {
+router.delete('/:roomId/marker', async (req, res) => {
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(req.params.roomId);
   db.prepare('DELETE FROM room_markers WHERE room_id = ?').run(req.params.roomId);
+
+  // Clear floor name on Google Calendar resource
+  if (room && room.google_resource_email && googleCalendar.isConfigured()) {
+    try {
+      await googleCalendar.updateRoomResource(room.google_resource_email, { floorName: '' });
+    } catch (err) {
+      console.warn('Failed to clear floor name on Google:', err.message);
+    }
+  }
+
   res.json({ success: true });
 });
 
