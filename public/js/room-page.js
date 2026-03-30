@@ -13,6 +13,7 @@ let roomData = null;
 let todayBookings = [];
 let selectedStart = null;
 let selectedEnd = null;
+let officeTimezone = null;
 
 if (!roomId && (!officeSlug || !roomNumber)) {
   document.getElementById('loading').innerHTML = '<p style="color:var(--red)">No room specified.<br>Use room.html?office=stockholm&room=1</p>';
@@ -43,6 +44,7 @@ async function loadRoom() {
 
     roomData = data.room;
     todayBookings = data.todaySchedule;
+    officeTimezone = data.timezone || null;
 
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = 'block';
@@ -61,9 +63,9 @@ function render() {
 
   // Status banner
   const banner = document.getElementById('status-banner');
-  const now = new Date();
+  const now = toTimezoneISO(new Date(), officeTimezone);
   const currentBooking = todayBookings.find(b =>
-    new Date(b.start_time) <= now && new Date(b.end_time) > now
+    b.start_time <= now && b.end_time > now
   );
 
   if (currentBooking) {
@@ -75,7 +77,7 @@ function render() {
     banner.className = 'status-banner available';
     document.getElementById('status-text').textContent = 'AVAILABLE';
 
-    const nextBooking = todayBookings.find(b => new Date(b.start_time) > now);
+    const nextBooking = todayBookings.find(b => b.start_time > now);
     document.getElementById('status-sub').textContent = nextBooking
       ? `Next: ${fmtTime(nextBooking.start_time)} â ${nextBooking.booked_by}`
       : 'No more bookings today';
@@ -229,18 +231,27 @@ function fmtTime(iso) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-function toLocalISO(d) {
-  const Y = d.getFullYear();
-  const M = String(d.getMonth() + 1).padStart(2, '0');
-  const D = String(d.getDate()).padStart(2, '0');
-  const h = String(d.getHours()).padStart(2, '0');
-  const m = String(d.getMinutes()).padStart(2, '0');
-  const s = String(d.getSeconds()).padStart(2, '0');
-  return `${Y}-${M}-${D}T${h}:${m}:${s}`;
+function toTimezoneISO(date, tz) {
+  if (!tz) {
+    const Y = date.getFullYear();
+    const M = String(date.getMonth() + 1).padStart(2, '0');
+    const D = String(date.getDate()).padStart(2, '0');
+    const h = String(date.getHours()).padStart(2, '0');
+    const m = String(date.getMinutes()).padStart(2, '0');
+    const s = String(date.getSeconds()).padStart(2, '0');
+    return `${Y}-${M}-${D}T${h}:${m}:${s}`;
+  }
+  const parts = {};
+  new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+  }).formatToParts(date).forEach(({ type, value }) => { parts[type] = value; });
+  const hour = parts.hour === '24' ? '00' : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}:${parts.second}`;
 }
 
 function localDateStr(d) {
-  return toLocalISO(d).slice(0, 10);
+  return toTimezoneISO(d, officeTimezone).slice(0, 10);
 }
 
 function escHtml(str) {
