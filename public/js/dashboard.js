@@ -67,6 +67,17 @@ function getDateRange(preset) {
 }
 
 async function loadDashboard(preset) {
+  const prompt = document.getElementById('dashboard-select-office');
+  const content = document.getElementById('dashboard-content');
+  if (typeof getSelectedOfficeId === 'function' && !getSelectedOfficeId()) {
+    prompt.style.display = '';
+    content.style.display = 'none';
+    lucide.createIcons({ nodes: [prompt] });
+    return;
+  }
+  prompt.style.display = 'none';
+  content.style.display = '';
+
   if (!preset && !dashboardLoaded) preset = 'month';
 
   const range = preset ? getDateRange(preset) : {
