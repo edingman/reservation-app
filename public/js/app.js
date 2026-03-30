@@ -52,7 +52,7 @@ async function loadOffices() {
 function renderOfficeSelector() {
   const select = document.getElementById('office-select');
   const current = select.value;
-  select.innerHTML = '<option value="">All Offices</option>';
+  select.innerHTML = '<option value="">Select Office</option>';
   offices.forEach(o => {
     const opt = document.createElement('option');
     opt.value = o.id;
@@ -87,11 +87,13 @@ document.getElementById('add-office-btn').addEventListener('click', async () => 
   const name = input.value.trim();
   if (!name) return;
 
+  const timezone = document.getElementById('new-office-timezone').value;
+
   try {
     const res = await fetch(`${API}/api/offices`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, timezone })
     });
     if (!res.ok) {
       const err = await res.json();
@@ -118,12 +120,15 @@ function renderOfficesList() {
   }
   list.innerHTML = offices.map(o => `
     <div class="office-list-item">
-      <div>
+      <div style="flex:1">
         <div class="office-name">${escapeHtml(o.name)}</div>
-        <div class="office-slug">/${o.slug}</div>
+        <div class="office-slug">/${o.slug} Â· ${o.timezone || 'Europe/Stockholm'}</div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span class="office-room-count">${o.room_count} room${o.room_count !== 1 ? 's' : ''}</span>
+        <button class="btn btn-ghost btn-sm" onclick="editOfficeTimezone(${o.id})" title="Edit timezone" style="color:var(--stone)">
+          <i data-lucide="clock" style="width:14px;height:14px"></i>
+        </button>
         <button class="btn btn-ghost btn-sm" onclick="deleteOffice(${o.id})" style="color:var(--red)">
           <i data-lucide="trash-2" style="width:14px;height:14px"></i>
         </button>
@@ -131,6 +136,30 @@ function renderOfficesList() {
     </div>
   `).join('');
   lucide.createIcons();
+}
+
+async function editOfficeTimezone(id) {
+  const office = offices.find(o => o.id === id);
+  if (!office) return;
+  const tz = prompt(`Timezone for "${office.name}":`, office.timezone || 'Europe/Stockholm');
+  if (tz === null || tz === office.timezone) return;
+
+  try {
+    const res = await fetch(`${API}/api/offices/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timezone: tz })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      return showToast(err.error || 'Failed to update timezone', 'error');
+    }
+    showToast('Timezone updated');
+    await loadOffices();
+    renderOfficesList();
+  } catch (err) {
+    showToast('Failed to update timezone', 'error');
+  }
 }
 
 async function deleteOffice(id) {
@@ -157,9 +186,19 @@ let rooms = [];
 let googleResources = [];
 
 async function loadRooms() {
+  const prompt = document.getElementById('rooms-select-office');
+  const content = document.getElementById('rooms-content');
+  if (!getSelectedOfficeId()) {
+    prompt.style.display = '';
+    content.style.display = 'none';
+    lucide.createIcons({ nodes: [prompt] });
+    return;
+  }
+  prompt.style.display = 'none';
+  content.style.display = '';
+
   try {
-    const officeParam = getSelectedOfficeId() ? `?office_id=${getSelectedOfficeId()}` : '';
-    const res = await fetch(`${API}/api/rooms${officeParam}`);
+    const res = await fetch(`${API}/api/rooms?office_id=${getSelectedOfficeId()}`);
     rooms = await res.json();
     renderRooms();
   } catch (err) {
@@ -251,6 +290,27 @@ function copyUrl(path, btn) {
 // ===== Room Modal =====
 const roomModal = document.getElementById('room-modal');
 
+async function populateFloorDropdown(room) {
+  const select = document.getElementById('room-floor');
+  const officeId = document.getElementById('room-office').value;
+  select.innerHTML = '<option value="">No floor assigned</option>';
+  if (!officeId) return;
+
+  try {
+    const res = await fetch(`${API}/api/floorplans?office_id=${officeId}`);
+    const plans = await res.json();
+    plans.forEach(fp => {
+      const opt = document.createElement('option');
+      opt.value = fp.id;
+      opt.textContent = `Floor ${fp.floor_number} â ${fp.name}`;
+      if (room && room.floor_plan_id && room.floor_plan_id === fp.id) opt.selected = true;
+      select.appendChild(opt);
+    });
+  } catch (err) {
+    // ignore
+  }
+}
+
 function openRoomModal(room = null) {
   if (!room && offices.length === 0) {
     showToast('Create an office first before adding rooms', 'error');
@@ -275,16 +335,11 @@ function openRoomModal(room = null) {
     officeSelect.appendChild(opt);
   });
 
-  // Populate Google resources dropdown
-  const select = document.getElementById('room-google-resource');
-  select.innerHTML = '<option value="">None (not linked)</option>';
-  googleResources.forEach(r => {
-    const opt = document.createElement('option');
-    opt.value = r.email;
-    opt.textContent = `${r.name} (${r.email})`;
-    if (room && room.google_resource_email === r.email) opt.selected = true;
-    select.appendChild(opt);
-  });
+  // Populate floor dropdown based on selected office
+  populateFloorDropdown(room);
+
+  // Re-populate floors when office changes
+  officeSelect.onchange = () => populateFloorDropdown(room);
 
   roomModal.classList.add('open');
 }
@@ -303,11 +358,11 @@ document.getElementById('room-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const id = document.getElementById('room-edit-id').value;
   const officeVal = document.getElementById('room-office').value;
+  const floorPlanId = document.getElementById('room-floor').value || null;
   const data = {
     name: document.getElementById('room-name').value.trim(),
     capacity: parseInt(document.getElementById('room-capacity').value) || 1,
     amenities: document.getElementById('room-amenities').value.trim(),
-    google_resource_email: document.getElementById('room-google-resource').value || null,
     office_id: officeVal ? parseInt(officeVal) : null
   };
 
@@ -326,7 +381,26 @@ document.getElementById('room-form').addEventListener('submit', async (e) => {
       return showToast(err.error || 'Failed to save room', 'error');
     }
 
-    showToast(id ? 'Room updated' : 'Room created');
+    const result = await res.json();
+    const roomId = result.id;
+
+    // Assign floor plan marker if a floor was selected (center of floor plan)
+    if (floorPlanId) {
+      await fetch(`${API}/api/rooms/${roomId}/marker`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ floor_plan_id: parseInt(floorPlanId), x_percent: 50, y_percent: 50 })
+      });
+    } else if (id) {
+      // If editing and floor cleared, remove marker
+      await fetch(`${API}/api/rooms/${roomId}/marker`, { method: 'DELETE' });
+    }
+
+    if (!id && result.google_auto_created) {
+      showToast('Room created and linked to Google Calendar');
+    } else {
+      showToast(id ? 'Room updated' : 'Room created');
+    }
     closeRoomModal();
     loadRooms();
   } catch (err) {
@@ -354,7 +428,19 @@ async function deleteRoom(id) {
 
 // ===== QR Codes =====
 async function loadQRCodes() {
+  const prompt = document.getElementById('qrcodes-select-office');
+  const content = document.getElementById('qrcodes-content');
+  if (!getSelectedOfficeId()) {
+    prompt.style.display = '';
+    content.style.display = 'none';
+    lucide.createIcons({ nodes: [prompt] });
+    return;
+  }
+  prompt.style.display = 'none';
+  content.style.display = '';
+
   if (rooms.length === 0) await loadRooms();
+  if (offices.length === 0) await loadOffices();
 
   const grid = document.getElementById('qr-grid');
   const empty = document.getElementById('qr-empty');
@@ -366,22 +452,50 @@ async function loadQRCodes() {
   }
 
   empty.style.display = 'none';
-  grid.innerHTML = rooms.map(room => `
-    <div class="qr-card">
-      <div class="qr-card-name">${escapeHtml(room.name)}</div>
-      <div class="text-muted text-xs mono">Capacity: ${room.capacity}</div>
-      <img src="${API}/api/rooms/${room.id}/qrcode" alt="QR Code for ${escapeHtml(room.name)}" loading="lazy">
-      <div class="qr-card-actions">
-        <button class="btn btn-outline btn-sm" onclick="downloadQR(${room.id}, '${escapeHtml(room.name)}')">
-          <i data-lucide="download" style="width:14px;height:14px"></i> Download
-        </button>
-        <button class="btn btn-outline btn-sm" onclick="printQR(${room.id}, '${escapeHtml(room.name)}')">
-          <i data-lucide="printer" style="width:14px;height:14px"></i> Print
-        </button>
-      </div>
-    </div>
-  `).join('');
 
+  // Office floor plan QR codes (only when a specific office is selected)
+  let html = '';
+  const selectedOffice = getSelectedOfficeId() ? offices.find(o => String(o.id) === getSelectedOfficeId()) : null;
+  if (selectedOffice) {
+    html += '<div class="qr-section-label">Floor Plan View</div>';
+    html += [selectedOffice].map(office => `
+      <div class="qr-card">
+        <div class="qr-card-name">${escapeHtml(office.name)}</div>
+        <div class="text-muted text-xs mono">Office Floor Plan</div>
+        <img src="${API}/api/offices/${office.slug}/floorview-qrcode" alt="QR Code for ${escapeHtml(office.name)} floor plan" loading="lazy">
+        <div class="qr-card-actions">
+          <button class="btn btn-outline btn-sm" onclick="downloadFloorQR('${escapeHtml(office.slug)}', '${escapeHtml(office.name)}')">
+            <i data-lucide="download" style="width:14px;height:14px"></i> Download
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="printFloorQR('${escapeHtml(office.slug)}', '${escapeHtml(office.name)}')">
+            <i data-lucide="printer" style="width:14px;height:14px"></i> Print
+          </button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // Room QR codes
+  if (rooms.length > 0) {
+    html += '<div class="qr-section-label">Room Booking</div>';
+    html += rooms.map(room => `
+      <div class="qr-card">
+        <div class="qr-card-name">${escapeHtml(room.name)}</div>
+        <div class="text-muted text-xs mono">Capacity: ${room.capacity}</div>
+        <img src="${API}/api/rooms/${room.id}/qrcode" alt="QR Code for ${escapeHtml(room.name)}" loading="lazy">
+        <div class="qr-card-actions">
+          <button class="btn btn-outline btn-sm" onclick="downloadQR(${room.id}, '${escapeHtml(room.name)}')">
+            <i data-lucide="download" style="width:14px;height:14px"></i> Download
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="printQR(${room.id}, '${escapeHtml(room.name)}')">
+            <i data-lucide="printer" style="width:14px;height:14px"></i> Print
+          </button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  grid.innerHTML = html;
   lucide.createIcons();
 }
 
@@ -398,6 +512,25 @@ function printQR(roomId, roomName) {
     <h1>${escapeHtml(roomName)}</h1>
     <img src="${API}/api/rooms/${roomId}/qrcode" alt="QR Code">
     <p class="qr-url">Scan to book this room</p>
+  `;
+  printArea.style.display = 'block';
+  window.print();
+  setTimeout(() => { printArea.style.display = 'none'; }, 1000);
+}
+
+function downloadFloorQR(slug, name) {
+  const link = document.createElement('a');
+  link.href = `${API}/api/offices/${slug}/floorview-qrcode`;
+  link.download = `qr-floorplan-${slug}.png`;
+  link.click();
+}
+
+function printFloorQR(slug, name) {
+  const printArea = document.getElementById('qr-print-area');
+  printArea.innerHTML = `
+    <h1>${escapeHtml(name)} â Floor Plan</h1>
+    <img src="${API}/api/offices/${slug}/floorview-qrcode" alt="QR Code">
+    <p class="qr-url">Scan to view floor plan & book rooms</p>
   `;
   printArea.style.display = 'block';
   window.print();
@@ -446,8 +579,7 @@ async function checkGoogleStatus() {
       badge.className = 'connection-badge connected';
       badge.innerHTML = '<span class="status-dot green"></span> Connected';
 
-      // Load resources and show sync section
-      loadGoogleResources();
+      // Show sync section
       document.getElementById('google-sync-section').style.display = 'block';
     } else {
       badge.className = 'connection-badge disconnected';
