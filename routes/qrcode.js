@@ -62,4 +62,27 @@ router.get('/rooms/:roomId/qrcode-data', async (req, res) => {
   }
 });
 
+// GET /api/offices/:slug/floorview-qrcode â QR code for office floor plan mobile view
+router.get('/offices/:slug/floorview-qrcode', async (req, res) => {
+  const office = db.prepare('SELECT * FROM offices WHERE slug = ?').get(req.params.slug);
+  if (!office) return res.status(404).json({ error: 'Office not found' });
+
+  const baseUrlSetting = db.prepare("SELECT value FROM settings WHERE key = 'base_url'").get();
+  const baseUrl = baseUrlSetting?.value || `${req.protocol}://${req.get('host')}`;
+  const floorviewUrl = `${baseUrl}/floorview.html?office=${office.slug}`;
+
+  try {
+    const qrBuffer = await QRCode.toBuffer(floorviewUrl, {
+      type: 'png',
+      width: 400,
+      margin: 2,
+      color: { dark: '#000000', light: '#FFFFFF' }
+    });
+    res.set('Content-Type', 'image/png');
+    res.send(qrBuffer);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to generate QR code' });
+  }
+});
+
 module.exports = router;
