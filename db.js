@@ -19,6 +19,8 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     slug TEXT NOT NULL UNIQUE,
+    timezone TEXT NOT NULL DEFAULT 'Europe/Stockholm',
+    google_building_id TEXT DEFAULT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   );
 
@@ -38,7 +40,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS floor_plans (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    image_path TEXT NOT NULL,
+    floor_number INTEGER NOT NULL DEFAULT 1,
+    image_path TEXT DEFAULT NULL,
     office_id INTEGER NOT NULL REFERENCES offices(id) ON DELETE CASCADE,
     created_at TEXT DEFAULT (datetime('now'))
   );
@@ -79,5 +82,44 @@ db.exec(`
     value TEXT
   );
 `);
+
+// Migrations: add timezone to offices
+try {
+  db.prepare("SELECT timezone FROM offices LIMIT 1").get();
+} catch (e) {
+  db.exec("ALTER TABLE offices ADD COLUMN timezone TEXT NOT NULL DEFAULT 'Europe/Stockholm'");
+}
+
+// Migrations: add floor_number and make image_path nullable
+try {
+  db.prepare("SELECT floor_number FROM floor_plans LIMIT 1").get();
+} catch (e) {
+  db.exec("ALTER TABLE floor_plans ADD COLUMN floor_number INTEGER NOT NULL DEFAULT 1");
+}
+
+// Migrate floor_plans to allow NULL image_path (SQLite can't ALTER COLUMN, so rebuild)
+try {
+  const colInfo = db.prepare("PRAGMA table_info(floor_plans)").all();
+  const imgCol = colInfo.find(c => c.name === 'image_path');
+  if (imgCol && imgCol.notnull === 1) {
+    db.exec(`
+      CREATE TABLE floor_plans_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        floor_number INTEGER NOT NULL DEFAULT 1,
+        image_path TEXT DEFAULT NULL,
+        office_id INTEGER NOT NULL REFERENCES offices(id) ON DELETE CASCADE,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      INSERT INTO floor_plans_new (id, name, floor_number, image_path, office_id, created_at)
+        SELECT id, name, floor_number, image_path, office_id, created_at FROM floor_plans;
+      DROP TABLE floor_plans;
+      ALTER TABLE floor_plans_new RENAME TO floor_plans;
+      CREATE INDEX IF NOT EXISTS idx_floor_plans_office ON floor_plans(office_id);
+    `);
+  }
+} catch (e) {
+  // Already migrated or fresh DB
+}
 
 module.exports = db;
