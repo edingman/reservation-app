@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Floor Plan</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/style.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/style.min.css">
+  <style>
+    :root {
+      --red: #FF2F00;
+      --teal: #0093A3;
+      --white: #FFFFFF;
+      --black: #000000;
+      --stone: #ACA19A;
+      --stone-light: #D6CFC9;
+      --font-sans: 'Geist', -apple-system, sans-serif;
+      --font-mono: 'Geist Mono', monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-sans);
+      background: var(--black);
+      color: var(--white);
+      min-height: 100dvh;
+    }
+
+    /* Header */
+    .fv-header {
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #222;
+    }
+    .fv-title {
+      font-size: 1.1rem;
+      font-weight: 800;
+      font-style: italic;
+    }
+    .fv-clock {
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      color: var(--stone);
+    }
+
+    /* Floor selector */
+    .fv-floor-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 16px;
+      border-bottom: 1px solid #222;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .fv-floor-tab {
+      padding: 12px 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--stone);
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      font-family: var(--font-sans);
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 150ms ease;
+    }
+    .fv-floor-tab.active {
+      color: var(--white);
+      border-bottom-color: var(--teal);
+    }
+
+    /* Floor plan map */
+    .fv-map-wrap {
+      position: relative;
+      margin: 16px;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #111;
+    }
+    .fv-map-wrap img {
+      width: 100%;
+      display: block;
+      opacity: 0.75;
+    }
+    .fv-no-image {
+      padding: 60px 20px;
+      text-align: center;
+      color: var(--stone);
+      font-size: 0.9rem;
+    }
+
+    /* Room markers on map */
+    .fv-marker {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      cursor: pointer;
+      z-index: 2;
+      transition: transform 100ms ease;
+    }
+    .fv-marker:active { transform: translate(-50%, -50%) scale(0.92); }
+
+    .fv-marker-dot {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 3px solid var(--white);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.6rem;
+      font-weight: 800;
+      color: var(--white);
+      font-family: var(--font-mono);
+    }
+    .fv-marker-dot.available { background: var(--teal); }
+    .fv-marker-dot.occupied { background: var(--red); }
+
+    .fv-marker-label {
+      position: absolute;
+      top: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.65rem;
+      font-weight: 700;
+      white-space: nowrap;
+      background: rgba(0,0,0,0.85);
+      padding: 2px 6px;
+      border-radius: 4px;
+      pointer-events: none;
+    }
+
+    /* Room list (below map) */
+    .fv-room-list {
+      padding: 0 16px 24px;
+    }
+    .fv-room-list h3 {
+      font-size: 0.7rem;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--stone);
+      margin-bottom: 10px;
+      padding-top: 8px;
+    }
+    .fv-room-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px;
+      background: #1a1a1a;
+      border-radius: 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background 150ms ease;
+    }
+    .fv-room-card:active { background: #252525; }
+
+    .fv-room-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .fv-room-dot.available { background: var(--teal); }
+    .fv-room-dot.occupied { background: var(--red); }
+
+    .fv-room-info { flex: 1; }
+    .fv-room-name {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .fv-room-status {
+      font-family: var(--font-mono);
+      font-size: 0.75rem;
+      color: var(--stone);
+      margin-top: 2px;
+    }
+    .fv-room-cap {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--stone);
+    }
+
+    /* Booking Sheet */
+    .fv-sheet-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 100;
+      display: none;
+    }
+    .fv-sheet-overlay.open { display: block; }
+
+    .fv-sheet {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: #1a1a1a;
+      border-radius: 20px 20px 0 0;
+      padding: 24px 20px 32px;
+      z-index: 101;
+      transform: translateY(100%);
+      transition: transform 300ms ease;
+      max-height: 85dvh;
+      overflow-y: auto;
+    }
+    .fv-sheet.open { transform: translateY(0); }
+
+    .fv-sheet-handle {
+      width: 40px;
+      height: 4px;
+      background: #444;
+      border-radius: 2px;
+      margin: 0 auto 16px;
+    }
+
+    .fv-sheet h2 {
+      font-size: 1.3rem;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+    .fv-sheet .sheet-sub {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      color: var(--stone);
+      margin-bottom: 20px;
+    }
+
+    .fv-sheet-status {
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .fv-sheet-status.available { background: var(--teal); color: var(--white); }
+    .fv-sheet-status.occupied { background: var(--red); color: var(--white); }
+
+    .fv-sheet-booking-info {
+      font-size: 0.85rem;
+      color: var(--stone);
+      margin-bottom: 16px;
+    }
+
+    /* Duration buttons */
+    .fv-dur-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .fv-dur-btn {
+      padding: 12px 8px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      font-family: var(--font-sans);
+      background: #2a2a2a;
+      color: var(--white);
+      border: 2px solid #333;
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .fv-dur-btn:hover:not(:disabled) { border-color: var(--teal); }
+    .fv-dur-btn.selected { border-color: var(--teal); background: var(--teal); }
+    .fv-dur-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .fv-dur-label { font-size: 0.65rem; font-weight: 400; color: var(--stone); margin-top: 2px; }
+    .fv-dur-btn.selected .fv-dur-label { color: rgba(255,255,255,0.8); }
+
+    .fv-name-input {
+      width: 100%;
+      padding: 12px 14px;
+      font-size: 1rem;
+      font-family: var(--font-sans);
+      background: #2a2a2a;
+      color: var(--white);
+      border: 2px solid #333;
+      border-radius: 10px;
+      outline: none;
+      margin-bottom: 12px;
+    }
+    .fv-name-input:focus { border-color: var(--teal); }
+    .fv-name-input::placeholder { color: #555; }
+
+    .fv-book-btn {
+      width: 100%;
+      padding: 14px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      font-family: var(--font-sans);
+      background: var(--teal);
+      color: var(--white);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    .fv-book-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .fv-cancel-btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      margin-top: 12px;
+      font-size: 0.85rem;
+      color: var(--stone);
+      cursor: pointer;
+      border: none;
+      background: none;
+      font-family: var(--font-sans);
+      padding: 8px;
+    }
+
+    /* Loading */
+    .fv-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 80dvh;
+      color: var(--stone);
+      flex-direction: column;
+      gap: 12px;
+    }
+    .fv-spinner {
+      width: 28px; height: 28px;
+      border: 3px solid #333;
+      border-top-color: var(--teal);
+      border-radius: 50%;
+      animation: fvSpin 600ms linear infinite;
+    }
+    @keyframes fvSpin { to { transform: rotate(360deg); } }
+
+    /* Toast */
+    .fv-toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 12px 24px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      z-index: 200;
+      animation: fvToastIn 300ms ease;
+    }
+    .fv-toast.success { background: var(--teal); color: var(--white); }
+    .fv-toast.error { background: var(--red); color: var(--white); }
+    @keyframes fvToastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } }
+  </style>
+</head>
+<body>
+
+  <div class="fv-loading" id="fv-loading">
+    <div class="fv-spinner"></div>
+    <p>Loading floor plan...</p>
+  </div>
+
+  <div id="fv-app" style="display:none">
+    <div class="fv-header">
+      <div class="fv-title" id="fv-office-name"></div>
+      <div class="fv-clock" id="fv-clock"></div>
+    </div>
+
+    <div class="fv-floor-tabs" id="fv-floor-tabs"></div>
+
+    <div class="fv-map-wrap" id="fv-map-wrap"></div>
+
+    <div class="fv-room-list">
+      <h3>Rooms on this floor</h3>
+      <div id="fv-room-list"></div>
+    </div>
+  </div>
+
+  <!-- Booking Bottom Sheet -->
+  <div class="fv-sheet-overlay" id="fv-sheet-overlay"></div>
+  <div class="fv-sheet" id="fv-sheet">
+    <div class="fv-sheet-handle"></div>
+    <h2 id="fv-sheet-room-name"></h2>
+    <div class="sheet-sub" id="fv-sheet-cap"></div>
+    <div id="fv-sheet-status-badge"></div>
+    <div class="fv-sheet-booking-info" id="fv-sheet-info"></div>
+    <div id="fv-sheet-book-section" style="display:none">
+      <div class="fv-dur-grid" id="fv-dur-grid"></div>
+      <input type="text" class="fv-name-input" id="fv-book-name" placeholder="Your name (optional)">
+      <button class="fv-book-btn" id="fv-book-btn" disabled>Select a duration</button>
+    </div>
+    <button class="fv-cancel-btn" id="fv-sheet-close">Close</button>
+  </div>
+
+  <script src="/js/floorview-page.js"></script>
+</body>
+</html>
